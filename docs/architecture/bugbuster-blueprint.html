@@ -1,0 +1,1181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Eight-plate system architecture drawing set for BugBuster: the host SDK hot path, the fold, agent topology, backpressure, ingest edge, sampling, and storage fan-out.">
+<title>The BugBuster Blueprint</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&display=swap">
+
+<style>
+  :root{
+    --paper:#FBFBFC; --surface:#FFFFFF; --surface2:#F4F5F7;
+    --ink:#14181F; --ink-soft:#565E6C; --ink-faint:#868E9B;
+    --line:#D7DAE1; --line-soft:#E7E9ED; --line-strong:#98A0AB;
+    --infra:#2B5FA8; --infra-tint:#EDF3FB;
+    --host:#A8621A;  --host-tint:#FBF3E9;
+    --fold:#0E7A6E;  --fold-tint:#E7F4F1;
+    --danger:#B3261E; --danger-tint:#FBEDEC;
+    --disp:"Archivo",system-ui,sans-serif;
+    --body:"IBM Plex Serif",Georgia,serif;
+    --mono:"IBM Plex Mono",ui-monospace,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --paper:#0D1015; --surface:#14181F; --surface2:#1A1F27;
+      --ink:#E6E9EE; --ink-soft:#9BA3B0; --ink-faint:#6C7480;
+      --line:#2A303A; --line-soft:#20252D; --line-strong:#4C5460;
+      --infra:#82ABE2; --infra-tint:#16202E;
+      --host:#E0A458;  --host-tint:#241B11;
+      --fold:#52C6B3;  --fold-tint:#0F2320;
+      --danger:#E8776D; --danger-tint:#251413;
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#0D1015; --surface:#14181F; --surface2:#1A1F27;
+    --ink:#E6E9EE; --ink-soft:#9BA3B0; --ink-faint:#6C7480;
+    --line:#2A303A; --line-soft:#20252D; --line-strong:#4C5460;
+    --infra:#82ABE2; --infra-tint:#16202E;
+    --host:#E0A458;  --host-tint:#241B11;
+    --fold:#52C6B3;  --fold-tint:#0F2320;
+    --danger:#E8776D; --danger-tint:#251413;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:var(--body); font-size:16px; line-height:1.62;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1240px;margin:0 auto;padding:0 24px 96px}
+
+  /* ── title block ─────────────────────────────── */
+  .titleblock{border:1px solid var(--line);background:var(--surface);margin:32px 0 8px}
+  .tb-main{padding:26px 28px 22px;border-bottom:1px solid var(--line)}
+  .tb-eyebrow{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-faint);margin:0 0 12px}
+  h1{font-family:var(--disp);font-weight:700;font-size:clamp(30px,5.2vw,50px);line-height:1.02;letter-spacing:-.022em;margin:0;text-wrap:balance}
+  .tb-thesis{margin:14px 0 0;max-width:64ch;color:var(--ink-soft);font-size:17px}
+  .tb-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+  .tb-cell{padding:12px 18px;border-right:1px solid var(--line)}
+  .tb-cell:last-child{border-right:0}
+  .tb-k{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-faint);display:block}
+  .tb-v{font-family:var(--mono);font-size:13px;font-weight:500;color:var(--ink)}
+
+  /* ── legend ──────────────────────────────────── */
+  .legend{display:flex;flex-wrap:wrap;gap:10px 22px;padding:16px 0 0;margin:0 0 40px;
+    font-family:var(--mono);font-size:11.5px;color:var(--ink-soft)}
+  .legend div{display:flex;align-items:center;gap:8px}
+  .sw{width:22px;height:11px;border:1.5px solid var(--line-strong);flex:none;border-radius:2px}
+  .sw.host{border-color:var(--host);background:var(--host-tint)}
+  .sw.infra{border-color:var(--infra);background:var(--infra-tint)}
+  .sw.fold{border-color:var(--fold);background:var(--fold-tint)}
+  .sw.dash{border-style:dashed;background:none}
+  .sw.drop{border:0;height:0;border-top:1.5px dashed var(--danger);border-radius:0}
+
+  /* ── layout ──────────────────────────────────── */
+  .cols{display:block}
+  @media (min-width:1080px){
+    .cols{display:grid;grid-template-columns:196px minmax(0,1fr);gap:52px;align-items:start}
+    .rail{position:sticky;top:26px}
+  }
+  .rail{font-family:var(--mono);font-size:11.5px;line-height:1.5}
+  .rail-h{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-faint);
+    padding-bottom:10px;border-bottom:1px solid var(--line);margin-bottom:12px}
+  .rail a{display:flex;gap:9px;padding:5px 0;color:var(--ink-soft);text-decoration:none;border-radius:3px}
+  .rail a:hover{color:var(--infra)}
+  .rail a:focus-visible{outline:2px solid var(--infra);outline-offset:3px}
+  .rail .num{color:var(--ink-faint);flex:none;font-variant-numeric:tabular-nums}
+  .rail-only{display:none}
+  @media (min-width:1080px){.rail-only{display:block}}
+
+  /* ── plates ──────────────────────────────────── */
+  .plate{margin:0 0 72px;scroll-margin-top:24px}
+  .plate-head{display:flex;gap:18px;align-items:baseline;border-top:2px solid var(--ink);
+    padding-top:12px;margin-bottom:6px}
+  .plate-num{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-faint);
+    letter-spacing:.06em;flex:none;padding-top:5px;font-variant-numeric:tabular-nums}
+  h2{font-family:var(--disp);font-weight:600;font-size:clamp(21px,2.6vw,27px);line-height:1.16;
+    letter-spacing:-.014em;margin:0;text-wrap:balance}
+  .plate-sub{margin:0 0 22px;color:var(--ink-soft);font-size:15.5px;max-width:74ch}
+  @media (min-width:1080px){.plate-sub{margin-left:44px}}
+
+  figure{margin:0 0 20px}
+  .fig-scroll{overflow-x:auto;border:1px solid var(--line);background:var(--surface);
+    padding:18px 16px;border-radius:3px}
+  .dg{display:block;width:100%;min-width:880px;height:auto}
+  figcaption{font-family:var(--mono);font-size:11.5px;line-height:1.55;color:var(--ink-soft);
+    margin-top:12px;max-width:88ch}
+  figcaption b{color:var(--ink);font-weight:600}
+
+  /* ── svg primitives ──────────────────────────── */
+  .dg text{font-family:var(--mono);fill:var(--ink)}
+  .ttl{font-size:12px;font-weight:600}
+  .lbl{font-size:11px}
+  .sm{font-size:9.5px;fill:var(--ink-soft)}
+  .sm-f{font-size:9.5px;fill:var(--ink-faint)}
+  .zt{font-size:9.5px;font-weight:600;letter-spacing:.11em;fill:var(--ink-faint)}
+  .box{fill:var(--surface2);stroke:var(--line-strong);stroke-width:1.25}
+  .box-host{fill:var(--host-tint);stroke:var(--host);stroke-width:1.25}
+  .box-infra{fill:var(--infra-tint);stroke:var(--infra);stroke-width:1.25}
+  .box-fold{fill:var(--fold-tint);stroke:var(--fold);stroke-width:1.5}
+  .box-drop{fill:var(--danger-tint);stroke:var(--danger);stroke-width:1.25}
+  .v2{stroke-dasharray:6 4}
+  .zone{fill:none;stroke:var(--line);stroke-width:1;stroke-dasharray:3 3}
+  .zone-host{fill:none;stroke:var(--host);stroke-width:1;stroke-dasharray:3 3;opacity:.65}
+  .e{fill:none;stroke:var(--line-strong);stroke-width:1.4}
+  .e-host{fill:none;stroke:var(--host);stroke-width:1.8}
+  .e-fold{fill:none;stroke:var(--fold);stroke-width:1.8}
+  .e-drop{fill:none;stroke:var(--danger);stroke-width:1.3;stroke-dasharray:4 3}
+  .e-ctl{fill:none;stroke:var(--infra);stroke-width:1.4;stroke-dasharray:6 3}
+  .rail-l{stroke:var(--line);stroke-width:1}
+  .mk{fill:var(--line-strong)}
+  .mk-h{fill:var(--host)}
+  .mk-f{fill:var(--fold)}
+  .mk-d{fill:var(--danger)}
+  .mk-i{fill:var(--infra)}
+  .t-host{fill:var(--host)}
+  .t-fold{fill:var(--fold)}
+  .t-drop{fill:var(--danger)}
+  .t-infra{fill:var(--infra)}
+
+  /* ── prose + tables ─────────────────────────── */
+  .prose{max-width:68ch}
+  @media (min-width:1080px){.prose{margin-left:44px}}
+  .prose p{margin:0 0 14px}
+  .prose strong{font-weight:600}
+  h3{font-family:var(--disp);font-weight:600;font-size:14px;letter-spacing:.02em;
+    text-transform:uppercase;color:var(--ink-soft);margin:32px 0 12px}
+  @media (min-width:1080px){h3{margin-left:44px}}
+  .tbl-scroll{overflow-x:auto}
+  @media (min-width:1080px){.tbl-scroll{margin-left:44px}}
+  table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;
+    min-width:560px;font-variant-numeric:tabular-nums}
+  th{text-align:left;font-weight:600;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--ink-faint);border-bottom:1px solid var(--line-strong);padding:8px 12px 8px 0;white-space:nowrap}
+  td{padding:9px 12px 9px 0;border-bottom:1px solid var(--line-soft);vertical-align:top;line-height:1.5}
+  tbody tr:last-child td{border-bottom:0}
+  td b{font-weight:600}
+  .num{text-align:right;padding-right:20px}
+  .pill{display:inline-block;font-size:9.5px;font-weight:600;letter-spacing:.06em;
+    padding:2px 7px;border-radius:2px;border:1px solid;white-space:nowrap}
+  .p-v1{color:var(--fold);border-color:var(--fold);background:var(--fold-tint)}
+  .p-v2{color:var(--infra);border-color:var(--infra);background:var(--infra-tint)}
+  .p-crit{color:var(--danger);border-color:var(--danger);background:var(--danger-tint)}
+  .p-host{color:var(--host);border-color:var(--host);background:var(--host-tint)}
+
+  .note{border-left:2px solid var(--fold);background:var(--fold-tint);padding:14px 18px;
+    margin:22px 0;max-width:72ch;font-size:15px}
+  @media (min-width:1080px){.note{margin-left:44px}}
+  .note p{margin:0}
+  .note-t{font-family:var(--mono);font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;
+    color:var(--fold);display:block;margin-bottom:6px;font-weight:600}
+
+  footer{border-top:1px solid var(--line);margin-top:8px;padding-top:20px;
+    font-family:var(--mono);font-size:11px;color:var(--ink-faint);line-height:1.7}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<style>
+  /* standalone reset — the hosted artifact gets this from the platform */
+  html{-webkit-text-size-adjust:100%}
+  img,svg{max-width:100%}
+  a{color:inherit}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ══════════ TITLE BLOCK ══════════ -->
+  <div class="titleblock">
+    <div class="tb-main">
+      <p class="tb-eyebrow">Drawing set · error-first observability platform</p>
+      <h1>The BugBuster Blueprint</h1>
+      <p class="tb-thesis">Eight plates covering the complete collection path — from the microsecond
+        inside a customer's request thread to the durable log, the storage fan-out, and the query
+        surface. Every number shown is a design target, not a measurement.</p>
+    </div>
+    <div class="tb-grid">
+      <div class="tb-cell"><span class="tb-k">Revision</span><span class="tb-v">Draft A</span></div>
+      <div class="tb-cell"><span class="tb-k">Date</span><span class="tb-v">2026-08-25</span></div>
+      <div class="tb-cell"><span class="tb-k">Status</span><span class="tb-v">Pre-implementation</span></div>
+      <div class="tb-cell"><span class="tb-k">Plates</span><span class="tb-v">8</span></div>
+      <div class="tb-cell"><span class="tb-k">Open decisions</span><span class="tb-v">4</span></div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <div><span class="sw host"></span> host process — their money</div>
+    <div><span class="sw infra"></span> our infrastructure</div>
+    <div><span class="sw fold"></span> the fold — where volume dies</div>
+    <div><span class="sw dash"></span> deferred to v2</div>
+    <div><span class="sw drop"></span> data-loss path (counted)</div>
+  </div>
+
+  <div class="cols">
+    <!-- ══════════ RAIL ══════════ -->
+    <nav class="rail rail-only" aria-label="Plate index">
+      <div class="rail-h">Plates</div>
+      <a href="#p1"><span class="num">01</span><span>System map</span></a>
+      <a href="#p2"><span class="num">02</span><span>Inside the host</span></a>
+      <a href="#p3"><span class="num">03</span><span>The fold</span></a>
+      <a href="#p4"><span class="num">04</span><span>Direct vs agent</span></a>
+      <a href="#p5"><span class="num">05</span><span>Backpressure</span></a>
+      <a href="#p6"><span class="num">06</span><span>Ingest edge</span></a>
+      <a href="#p7"><span class="num">07</span><span>Sampling</span></a>
+      <a href="#p8"><span class="num">08</span><span>Storage fan-out</span></a>
+      <div class="rail-h" style="margin-top:22px">Reference</div>
+      <a href="#budget"><span class="num">§</span><span>Budgets</span></a>
+      <a href="#failure"><span class="num">§</span><span>Failure matrix</span></a>
+      <a href="#decisions"><span class="num">§</span><span>Open decisions</span></a>
+    </nav>
+
+    <main>
+
+    <!-- ══════════════════ PLATE 01 ══════════════════ -->
+    <section class="plate" id="p1">
+      <div class="plate-head">
+        <span class="plate-num">01</span>
+        <h2>System map — one event's whole journey</h2>
+      </div>
+      <p class="plate-sub">Two money boundaries define the architecture. Above the first, every
+        microsecond is billed to the customer. Below the second, every byte is billed to us. The
+        agent sits on their machine but in our process — which is precisely why it is the cheapest
+        place to do expensive work.</p>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 1000 800" role="img" aria-label="End-to-end system map: instrumented applications send telemetry through an optional node-local agent to the ingest edge, into a partitioned durable log, through three consumer pipelines into three stores, and out via a query API; a control plane returns sampling directives to the SDK.">
+            <defs>
+              <marker id="m1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk"/></marker>
+              <marker id="m1h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk-h"/></marker>
+              <marker id="m1i" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk-i"/></marker>
+            </defs>
+
+            <!-- ZONE A -->
+            <rect class="zone-host" x="20" y="40" width="720" height="112" rx="3"/>
+            <text class="zt" x="32" y="58">APPLICATION HOSTS · THEIR PROCESS · THEIR MONEY</text>
+            <rect class="box-host" x="32" y="70" width="222" height="66" rx="4"/>
+            <text class="ttl" x="143" y="94" text-anchor="middle">Node service</text>
+            <text class="sm" x="143" y="110" text-anchor="middle">SDK · worker thread</text>
+            <text class="sm-f" x="143" y="124" text-anchor="middle">AsyncLocalStorage context</text>
+            <rect class="box-host" x="269" y="70" width="222" height="66" rx="4"/>
+            <text class="ttl" x="380" y="94" text-anchor="middle">Python service</text>
+            <text class="sm" x="380" y="110" text-anchor="middle">SDK · fork-safe, GIL-aware</text>
+            <text class="sm-f" x="380" y="124" text-anchor="middle">contextvars context</text>
+            <rect class="box-host v2" x="506" y="70" width="222" height="66" rx="4"/>
+            <text class="ttl" x="617" y="94" text-anchor="middle">Browser / mobile</text>
+            <text class="sm" x="617" y="110" text-anchor="middle">SDK · sendBeacon on unload</text>
+            <text class="sm-f" x="617" y="124" text-anchor="middle">64 KB cap · no retry</text>
+
+            <!-- ZONE B -->
+            <rect class="zone" x="20" y="176" width="720" height="92" rx="3"/>
+            <text class="zt" x="32" y="194">NODE-LOCAL · OUR PROCESS, THEIR MACHINE</text>
+            <rect class="box-infra v2" x="32" y="206" width="450" height="50" rx="4"/>
+            <text class="ttl" x="257" y="227" text-anchor="middle">BugBuster Agent</text>
+            <text class="sm" x="257" y="243" text-anchor="middle">cross-process fold · disk spool · one connection per node</text>
+            <text class="sm-f" x="500" y="222">direct mode</text>
+            <text class="sm-f" x="500" y="235">bypasses this</text>
+            <text class="sm-f" x="500" y="248">entirely →</text>
+
+            <!-- arrows A -> B -->
+            <path class="e-host" d="M143 136 V 206" marker-end="url(#m1h)"/>
+            <path class="e-host" d="M380 136 V 206" marker-end="url(#m1h)"/>
+            <text class="sm t-host" x="150" y="168">UDS ~30µs</text>
+            <!-- bypass -->
+            <path class="e-host" d="M617 136 V 292" marker-end="url(#m1h)"/>
+            <text class="sm t-host" x="624" y="192">direct</text>
+            <text class="sm t-host" x="624" y="205">HTTPS</text>
+
+            <!-- ZONE C -->
+            <rect class="zone" x="20" y="292" width="720" height="470" rx="3"/>
+            <text class="zt" x="32" y="310">BUGBUSTER PLATFORM · OUR MONEY</text>
+
+            <path class="e" d="M257 256 V 322" marker-end="url(#m1)"/>
+
+            <rect class="box-infra" x="32" y="322" width="696" height="58" rx="4"/>
+            <text class="ttl" x="380" y="345" text-anchor="middle">INGEST EDGE · stateless</text>
+            <text class="sm" x="380" y="362" text-anchor="middle">authenticate · quota · size · read priority byte · append → 202 · p99 &lt; 15 ms · never parses the body</text>
+
+            <path class="e" d="M380 380 V 406" marker-end="url(#m1)"/>
+            <rect class="box-infra" x="32" y="406" width="696" height="54" rx="4"/>
+            <text class="ttl" x="380" y="428" text-anchor="middle">DURABLE LOG — Kafka / Redpanda</text>
+            <text class="sm" x="380" y="444" text-anchor="middle">partitioned by org_id · replayable · whales get their own topic</text>
+
+            <path class="e" d="M143 460 V 488" marker-end="url(#m1)"/>
+            <path class="e" d="M380 460 V 488" marker-end="url(#m1)"/>
+            <path class="e" d="M617 460 V 488" marker-end="url(#m1)"/>
+
+            <rect class="box-fold" x="32" y="488" width="222" height="58" rx="4"/>
+            <text class="ttl" x="143" y="511" text-anchor="middle">Fold merger</text>
+            <text class="sm" x="143" y="527" text-anchor="middle">merge HLL + DDSketch</text>
+            <text class="sm-f" x="143" y="540" text-anchor="middle">across every pod</text>
+            <rect class="box-infra" x="269" y="488" width="222" height="58" rx="4"/>
+            <text class="ttl" x="380" y="511" text-anchor="middle">Correlator</text>
+            <text class="sm" x="380" y="527" text-anchor="middle">release → commit → file:line</text>
+            <text class="sm-f" x="380" y="540" text-anchor="middle">deploy boundary detection</text>
+            <rect class="box-infra" x="506" y="488" width="222" height="58" rx="4"/>
+            <text class="ttl" x="617" y="511" text-anchor="middle">Alert evaluator</text>
+            <text class="sm" x="617" y="527" text-anchor="middle">new fingerprint · rate spike</text>
+            <text class="sm-f" x="617" y="540" text-anchor="middle">drives sampling boost</text>
+
+            <path class="e" d="M143 546 V 574" marker-end="url(#m1)"/>
+            <path class="e" d="M380 546 V 574" marker-end="url(#m1)"/>
+            <path class="e" d="M617 546 V 574" marker-end="url(#m1)"/>
+
+            <rect class="box" x="32" y="574" width="222" height="58" rx="4"/>
+            <text class="ttl" x="143" y="597" text-anchor="middle">Postgres</text>
+            <text class="sm" x="143" y="613" text-anchor="middle">issues · fingerprints</text>
+            <text class="sm-f" x="143" y="626" text-anchor="middle">deploys · ownership</text>
+            <rect class="box" x="269" y="574" width="222" height="58" rx="4"/>
+            <text class="ttl" x="380" y="597" text-anchor="middle">Columnar / TSDB</text>
+            <text class="sm" x="380" y="613" text-anchor="middle">time-bucketed aggregates</text>
+            <text class="sm-f" x="380" y="626" text-anchor="middle">serialized sketches</text>
+            <rect class="box" x="506" y="574" width="222" height="58" rx="4"/>
+            <text class="ttl" x="617" y="597" text-anchor="middle">Object store</text>
+            <text class="sm" x="617" y="613" text-anchor="middle">exemplars · raw envelopes</text>
+            <text class="sm-f" x="617" y="626" text-anchor="middle">cheap, cold, replayable</text>
+
+            <path class="e" d="M143 632 V 656" marker-end="url(#m1)"/>
+            <path class="e" d="M380 632 V 656" marker-end="url(#m1)"/>
+            <path class="e" d="M617 632 V 656" marker-end="url(#m1)"/>
+
+            <rect class="box-infra" x="32" y="656" width="696" height="44" rx="4"/>
+            <text class="ttl" x="380" y="683" text-anchor="middle">QUERY API — every response carries its own fidelity metadata</text>
+
+            <path class="e" d="M143 700 V 722" marker-end="url(#m1)"/>
+            <path class="e" d="M380 700 V 722" marker-end="url(#m1)"/>
+            <path class="e" d="M617 700 V 722" marker-end="url(#m1)"/>
+            <rect class="box" x="32" y="722" width="222" height="34" rx="4"/>
+            <text class="lbl" x="143" y="743" text-anchor="middle">Dashboard</text>
+            <rect class="box v2" x="269" y="722" width="222" height="34" rx="4"/>
+            <text class="lbl" x="380" y="743" text-anchor="middle">AI Debugger</text>
+            <rect class="box v2" x="506" y="722" width="222" height="34" rx="4"/>
+            <text class="lbl" x="617" y="743" text-anchor="middle">Webhooks / Slack</text>
+
+            <!-- CONTROL PLANE -->
+            <rect class="box-infra" x="770" y="322" width="210" height="138" rx="4"/>
+            <text class="ttl" x="875" y="346" text-anchor="middle">CONTROL PLANE</text>
+            <text class="sm" x="784" y="368">· per-type sample rates</text>
+            <text class="sm" x="784" y="384">· fingerprint suppression</text>
+            <text class="sm" x="784" y="400">· quota state per org</text>
+            <text class="sm" x="784" y="416">· config version</text>
+            <text class="sm-f" x="784" y="438">the only component that</text>
+            <text class="sm-f" x="784" y="450">talks back to the SDK</text>
+
+            <path class="e" d="M728 351 H 770" marker-end="url(#m1)"/>
+            <text class="sm-f" x="733" y="343">counts</text>
+
+            <!-- the return loop -->
+            <path class="e-ctl" d="M875 322 V 103 H 745" marker-end="url(#m1i)"/>
+            <text class="sm t-infra" x="888" y="200">directives</text>
+            <text class="sm t-infra" x="888" y="214">ride back on</text>
+            <text class="sm t-infra" x="888" y="228">every 202</text>
+            <text class="sm t-infra" x="760" y="94">↓ SDK obeys</text>
+
+            <!-- replay -->
+            <path class="e-ctl" d="M32 433 H 14 V 517 H 30" marker-end="url(#m1i)"/>
+            <text class="sm t-infra" x="6" y="480" transform="rotate(-90 6 480)">replay</text>
+          </svg>
+        </div>
+        <figcaption><b>The control-plane return path is the load-bearing edge.</b> Without it, ingest
+          can only reject traffic that has already been generated, serialized, and transmitted. With
+          it, the SDK stops producing at the source — which is the only intervention that costs the
+          host nothing.</figcaption>
+      </figure>
+    </section>
+
+    <!-- ══════════════════ PLATE 02 ══════════════════ -->
+    <section class="plate" id="p2">
+      <div class="plate-head">
+        <span class="plate-num">02</span>
+        <h2>Inside the host — the line between 5µs and everything else</h2>
+      </div>
+      <p class="plate-sub">The hot path runs on every request and does four things, none of which
+        touch the OS. Everything expensive — stack parsing, redaction, fingerprinting, compression —
+        happens on the other side of the ring buffer, where being slow is free.</p>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 1000 500" role="img" aria-label="The host process split into two lanes: a hot path of recursion guard, sampler and ring buffer feeding drop counters; and a flush worker that drains the ring, parses stacks, redacts, fingerprints, folds, serializes, compresses and transmits.">
+            <defs>
+              <marker id="m2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk"/></marker>
+              <marker id="m2h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk-h"/></marker>
+              <marker id="m2d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk-d"/></marker>
+              <marker id="m2f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk-f"/></marker>
+            </defs>
+
+            <!-- LANE 1 -->
+            <rect class="zone-host" x="20" y="52" width="960" height="140" rx="3"/>
+            <text class="zt" x="32" y="70">HOT PATH · RUNS ON EVERY REQUEST · TOTAL BUDGET &lt; 5µs</text>
+
+            <rect class="box-host" x="36" y="86" width="150" height="56" rx="4"/>
+            <text class="ttl" x="111" y="110" text-anchor="middle">app throws</text>
+            <text class="sm" x="111" y="126" text-anchor="middle">or logs</text>
+
+            <rect class="box-host" x="206" y="86" width="150" height="56" rx="4"/>
+            <text class="ttl" x="281" y="110" text-anchor="middle">recursion guard</text>
+            <text class="sm" x="281" y="126" text-anchor="middle">in_capture? → return</text>
+            <text class="sm-f" x="281" y="158" text-anchor="middle">~5 ns</text>
+
+            <rect class="box-host" x="376" y="86" width="150" height="56" rx="4"/>
+            <text class="ttl" x="451" y="110" text-anchor="middle">sampler</text>
+            <text class="sm" x="451" y="126" text-anchor="middle">obeys directives</text>
+
+            <rect class="box-host" x="546" y="86" width="150" height="56" rx="4"/>
+            <text class="ttl" x="621" y="110" text-anchor="middle">ring buffer</text>
+            <text class="sm" x="621" y="126" text-anchor="middle">fixed BYTES · refs only</text>
+
+            <rect class="box-drop" x="712" y="86" width="240" height="56" rx="4"/>
+            <text class="ttl" x="832" y="108" text-anchor="middle">DROP COUNTERS</text>
+            <text class="sm" x="832" y="124" text-anchor="middle">sampled_out · buffer_full</text>
+            <text class="sm" x="832" y="136" text-anchor="middle">quota_denied · high_water</text>
+
+            <path class="e-host" d="M186 114 H 206" marker-end="url(#m2h)"/>
+            <path class="e-host" d="M356 114 H 376" marker-end="url(#m2h)"/>
+            <path class="e-host" d="M526 114 H 546" marker-end="url(#m2h)"/>
+
+            <!-- drop rail -->
+            <path class="e-drop" d="M451 142 V 166 H 832 V 146" marker-end="url(#m2d)"/>
+            <path class="e-drop" d="M621 142 V 166"/>
+            <text class="sm t-drop" x="462" y="180">sampled_out</text>
+            <text class="sm t-drop" x="632" y="180">dropped_buffer_full</text>
+            <text class="sm-f" x="451" y="158" text-anchor="middle">~50 ns</text>
+            <text class="sm-f" x="700" y="114" text-anchor="middle">~20 ns</text>
+
+            <!-- LANE 2 -->
+            <rect class="zone" x="20" y="206" width="960" height="266" rx="3"/>
+            <text class="zt" x="32" y="224">FLUSH WORKER · OFF THE REQUEST PATH · SLOW IS FREE HERE</text>
+
+            <path class="e-host" d="M570 142 V 232" marker-end="url(#m2h)"/>
+            <text class="sm t-host" x="578" y="200">handoff</text>
+
+            <rect class="box" x="495" y="232" width="150" height="56" rx="4"/>
+            <text class="ttl" x="570" y="256" text-anchor="middle">drain ring</text>
+            <text class="sm" x="570" y="272" text-anchor="middle">batch of refs</text>
+
+            <rect class="box" x="661" y="232" width="150" height="56" rx="4"/>
+            <text class="ttl" x="736" y="256" text-anchor="middle">parse stack</text>
+            <text class="sm" x="736" y="272" text-anchor="middle">symbolicate frames</text>
+            <text class="sm-f" x="736" y="304" text-anchor="middle">10–50 µs · was deferred</text>
+
+            <rect class="box" x="827" y="232" width="150" height="56" rx="4"/>
+            <text class="ttl" x="902" y="256" text-anchor="middle">redact PII</text>
+            <text class="sm" x="902" y="272" text-anchor="middle">by trust level</text>
+
+            <path class="e" d="M645 260 H 661" marker-end="url(#m2)"/>
+            <path class="e" d="M811 260 H 827" marker-end="url(#m2)"/>
+
+            <!-- wrap -->
+            <path class="e" d="M902 288 V 322 H 111 V 352" marker-end="url(#m2)"/>
+
+            <rect class="box-fold" x="36" y="352" width="150" height="56" rx="4"/>
+            <text class="ttl" x="111" y="376" text-anchor="middle">FINGERPRINT</text>
+            <text class="sm" x="111" y="392" text-anchor="middle">normalise + hash</text>
+            <rect class="box-fold" x="206" y="352" width="150" height="56" rx="4"/>
+            <text class="ttl" x="281" y="376" text-anchor="middle">FOLD</text>
+            <text class="sm" x="281" y="392" text-anchor="middle">group · sketch · exemplar</text>
+            <rect class="box" x="376" y="352" width="150" height="56" rx="4"/>
+            <text class="ttl" x="451" y="376" text-anchor="middle">serialize</text>
+            <text class="sm" x="451" y="392" text-anchor="middle">envelope framing</text>
+            <rect class="box" x="546" y="352" width="150" height="56" rx="4"/>
+            <text class="ttl" x="621" y="376" text-anchor="middle">compress</text>
+            <text class="sm" x="621" y="392" text-anchor="middle">zstd + trained dict</text>
+            <rect class="box" x="716" y="352" width="150" height="56" rx="4"/>
+            <text class="ttl" x="791" y="376" text-anchor="middle">transport</text>
+            <text class="sm" x="791" y="392" text-anchor="middle">breaker · jittered retry</text>
+
+            <path class="e-fold" d="M186 380 H 206" marker-end="url(#m2f)"/>
+            <path class="e-fold" d="M356 380 H 376" marker-end="url(#m2f)"/>
+            <path class="e" d="M526 380 H 546" marker-end="url(#m2)"/>
+            <path class="e" d="M696 380 H 716" marker-end="url(#m2)"/>
+            <path class="e" d="M866 380 H 944" marker-end="url(#m2)"/>
+            <text class="sm-f" x="880" y="372">→ UDS</text>
+            <text class="sm-f" x="880" y="398">or HTTPS</text>
+
+            <!-- meta record -->
+            <path class="e-drop" d="M940 142 V 338 H 451 V 352" marker-end="url(#m2d)"/>
+            <text class="sm t-drop" x="470" y="332">meta record rides in every batch — the dashboard can always state its own fidelity</text>
+
+            <text class="sm-f" x="36" y="440">Every box in this lane is a place we may crash without harming the host: the ring buffer</text>
+            <text class="sm-f" x="36" y="454">is already drained, and a dead worker degrades to counting rather than to breaking the app.</text>
+          </svg>
+        </div>
+        <figcaption><b>The ring buffer is the blast door.</b> Left of it, failure means dropping a
+          counted event. Right of it, failure means losing a batch. Neither can propagate into the
+          request thread — which is what makes the &ldquo;never throw into user code&rdquo; rule
+          structurally true rather than merely intended.</figcaption>
+      </figure>
+    </section>
+
+    <!-- ══════════════════ PLATE 03 ══════════════════ -->
+    <section class="plate" id="p3">
+      <div class="plate-head">
+        <span class="plate-num">03</span>
+        <h2>The fold — where four orders of magnitude go</h2>
+      </div>
+      <p class="plate-sub">One bad deploy, ten seconds, forty pods, fifty thousand throws. An
+        event-oriented SDK transmits all of it. Grouping by fingerprint before the network turns
+        250 MB into roughly 41 KB while keeping exact counts, accurate percentiles, and full stacks.</p>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 1000 460" role="img" aria-label="Fifty thousand events in three fingerprint groups enter a fold stage and leave as three aggregate records carrying exact counts, mergeable sketches and a handful of full-fidelity exemplars, reducing 250 megabytes to 41 kilobytes.">
+            <defs>
+              <marker id="m3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk"/></marker>
+              <marker id="m3f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk-f"/></marker>
+              <pattern id="ev" width="13" height="13" patternUnits="userSpaceOnUse">
+                <rect x="1.5" y="1.5" width="8" height="8" rx="1" fill="var(--host)" opacity="0.42"/>
+              </pattern>
+            </defs>
+
+            <text class="zt" x="36" y="42">RAW EVENTS IN THE RING · 10-SECOND WINDOW</text>
+            <text class="zt" x="404" y="42">FOLD</text>
+            <text class="zt" x="546" y="42">ON THE WIRE</text>
+
+            <!-- bands -->
+            <rect x="36" y="58" width="240" height="52" rx="3" fill="url(#ev)" stroke="var(--host)" stroke-width="1.25"/>
+            <text class="sm t-host" x="42" y="126">fp_a1b2c3 · 41,200 events</text>
+            <rect x="36" y="146" width="240" height="40" rx="3" fill="url(#ev)" stroke="var(--host)" stroke-width="1.25"/>
+            <text class="sm t-host" x="42" y="202">fp_7d0e11 · 6,900 events</text>
+            <rect x="36" y="222" width="240" height="26" rx="3" fill="url(#ev)" stroke="var(--host)" stroke-width="1.25"/>
+            <text class="sm t-host" x="42" y="264">fp_c44f02 · 1,900 events</text>
+
+            <text class="ttl t-host" x="36" y="300">50,000 events</text>
+            <text class="lbl" x="36" y="318">≈ 250 MB · 5 KB each</text>
+            <text class="sm-f" x="36" y="336">band height ∝ share of the storm</text>
+
+            <!-- fold processor -->
+            <rect class="box-fold" x="330" y="58" width="150" height="190" rx="4"/>
+            <text class="ttl t-fold" x="405" y="132" text-anchor="middle">FOLD</text>
+            <text class="sm" x="405" y="152" text-anchor="middle">group by</text>
+            <text class="sm" x="405" y="166" text-anchor="middle">fingerprint</text>
+            <text class="sm-f" x="405" y="188" text-anchor="middle">bounded to 10k</text>
+            <text class="sm-f" x="405" y="200" text-anchor="middle">live groups; then</text>
+            <text class="sm-f" x="405" y="212" text-anchor="middle">coarsen, never OOM</text>
+
+            <path class="e-host" d="M276 84 H 330" marker-end="url(#m3)"/>
+            <path class="e-host" d="M276 166 H 330" marker-end="url(#m3)"/>
+            <path class="e-host" d="M276 235 H 330" marker-end="url(#m3)"/>
+
+            <path class="e-fold" d="M480 100 H 540" marker-end="url(#m3f)"/>
+            <path class="e-fold" d="M480 153 H 540" marker-end="url(#m3f)"/>
+            <path class="e-fold" d="M480 213 H 540" marker-end="url(#m3f)"/>
+
+            <!-- expanded card -->
+            <rect class="box-fold" x="540" y="58" width="424" height="118" rx="4"/>
+            <text class="ttl" x="554" y="78">fp_a1b2c3</text>
+            <text class="sm" x="632" y="78">PaymentTimeout @ PaymentService.createPayment:142</text>
+            <rect class="box" x="552" y="88" width="96" height="46" rx="3"/>
+            <text class="sm-f" x="600" y="103" text-anchor="middle">count</text>
+            <text class="ttl" x="600" y="120" text-anchor="middle">41,200</text>
+            <rect class="box" x="656" y="88" width="96" height="46" rx="3"/>
+            <text class="sm-f" x="704" y="103" text-anchor="middle">HLL users</text>
+            <text class="ttl" x="704" y="120" text-anchor="middle">≈6,921</text>
+            <rect class="box" x="760" y="88" width="96" height="46" rx="3"/>
+            <text class="sm-f" x="808" y="103" text-anchor="middle">DDSketch p99</text>
+            <text class="ttl" x="808" y="120" text-anchor="middle">30.2 s</text>
+            <rect class="box" x="864" y="88" width="88" height="46" rx="3"/>
+            <text class="sm-f" x="908" y="103" text-anchor="middle">top-K</text>
+            <text class="ttl" x="908" y="120" text-anchor="middle">20 + other</text>
+            <text class="sm" x="554" y="152">6 exemplars — first · last · slowest · one per release · one novel stack</text>
+            <text class="sm-f" x="554" y="167">releases [2.8.1] · adjusted_count 1.0 · raw grouping inputs attached for server re-fingerprint</text>
+
+            <!-- collapsed cards -->
+            <rect class="box" x="540" y="188" width="424" height="40" rx="4"/>
+            <text class="ttl" x="554" y="205">fp_7d0e11</text>
+            <text class="sm" x="632" y="205">ConnectionTimeout @ UserService.getUser</text>
+            <text class="sm" x="554" y="220">count 6,900 · HLL ≈2,140 · 4 exemplars</text>
+            <rect class="box" x="540" y="240" width="424" height="40" rx="4"/>
+            <text class="ttl" x="554" y="257">fp_c44f02</text>
+            <text class="sm" x="632" y="257">PoolExhausted @ db.acquire</text>
+            <text class="sm" x="554" y="272">count 1,900 · HLL ≈880 · 3 exemplars</text>
+
+            <text class="ttl t-fold" x="540" y="308">≈ 41 KB</text>
+            <text class="lbl" x="540" y="326">3 aggregates + 13 exemplars</text>
+            <text class="sm-f" x="540" y="344">before zstd; the dictionary takes it lower still</text>
+
+            <!-- ratio bar -->
+            <line class="rail-l" x1="36" y1="372" x2="964" y2="372"/>
+            <rect x="36" y="386" width="928" height="18" rx="2" fill="var(--host-tint)" stroke="var(--host)" stroke-width="1"/>
+            <rect x="36" y="386" width="1.6" height="18" fill="var(--fold)"/>
+            <text class="sm t-host" x="52" y="399">250 MB — what an event-oriented SDK transmits</text>
+            <text class="ttl t-fold" x="36" y="428">6,100 ×</text>
+            <text class="lbl" x="110" y="428">smaller. The teal sliver at the left edge is the folded payload, drawn to scale.</text>
+          </svg>
+        </div>
+        <figcaption><b>This is the plate the project stands on.</b> OpenTelemetry cannot draw it —
+          its data model is per-event and grouping is specified as a backend concern, so the
+          fingerprint is not available client-side to fold against. Moving that one primitive into
+          the SDK is what buys the ratio.</figcaption>
+      </figure>
+
+      <div class="note">
+        <span class="note-t">The cost we accept</span>
+        <p>Fingerprinting client-side makes the algorithm part of the wire contract, so version skew
+          across customer SDK deployments is real. Two mitigations carry it: raw grouping inputs
+          travel alongside the hash so the server can re-fingerprint on demand, and the durable log
+          stays replayable so history can be recomputed when the algorithm improves.</p>
+      </div>
+    </section>
+
+    <!-- ══════════════════ PLATE 04 ══════════════════ -->
+    <section class="plate" id="p4">
+      <div class="plate-head">
+        <span class="plate-num">04</span>
+        <h2>Direct mode versus agent mode — what actually moves</h2>
+      </div>
+      <p class="plate-sub">Same system, two wirings. The argument is not that the agent is faster;
+        it is that five entire categories of failure leave the customer's process. Compare the height
+        of the amber box on each side — that is the whole case.</p>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 1000 430" role="img" aria-label="Side by side comparison: in direct mode the host process contains capture, fold, serialize, compress, TLS, retry, circuit breaker and connection pool; in agent mode the host contains only capture, fold, serialize and a socket write, with the remaining five responsibilities relocated into the node-local agent.">
+            <defs>
+              <marker id="m4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk"/></marker>
+              <marker id="m4h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk-h"/></marker>
+            </defs>
+
+            <text class="zt" x="30" y="30">MODE A · DIRECT — DEFAULT, ZERO INFRASTRUCTURE</text>
+            <text class="zt" x="530" y="30">MODE B · AGENT — DEFERRED TO V2</text>
+            <line class="rail-l" x1="500" y1="14" x2="500" y2="416" stroke-dasharray="3 4"/>
+
+            <!-- A: host -->
+            <rect class="box-host" x="30" y="44" width="440" height="228" rx="4"/>
+            <text class="ttl t-host" x="44" y="66">HOST PROCESS — 8 responsibilities</text>
+            <rect class="box" x="44" y="78" width="196" height="26" rx="2"/><text class="lbl" x="54" y="96">capture · ring buffer</text>
+            <rect class="box" x="44" y="110" width="196" height="26" rx="2"/><text class="lbl" x="54" y="128">fingerprint · fold</text>
+            <rect class="box" x="44" y="142" width="196" height="26" rx="2"/><text class="lbl" x="54" y="160">serialize</text>
+            <rect class="box-drop" x="256" y="78" width="200" height="26" rx="2"/><text class="lbl" x="266" y="96">compress (CPU)</text>
+            <rect class="box-drop" x="256" y="110" width="200" height="26" rx="2"/><text class="lbl" x="266" y="128">TLS handshake + certs</text>
+            <rect class="box-drop" x="256" y="142" width="200" height="26" rx="2"/><text class="lbl" x="266" y="160">bounded retry + jitter</text>
+            <rect class="box-drop" x="256" y="174" width="200" height="26" rx="2"/><text class="lbl" x="266" y="192">circuit breaker state</text>
+            <rect class="box-drop" x="256" y="206" width="200" height="26" rx="2"/><text class="lbl" x="266" y="224">connection pool</text>
+            <text class="sm t-drop" x="44" y="192">red = failure modes</text>
+            <text class="sm t-drop" x="44" y="206">that live in THEIR</text>
+            <text class="sm t-drop" x="44" y="220">process and their</text>
+            <text class="sm t-drop" x="44" y="234">incident channel</text>
+            <text class="sm-f" x="44" y="258">200 pods → 200 TLS handshakes, 200 breakers, 200 disjoint fold windows</text>
+
+            <path class="e-host" d="M250 272 V 316" marker-end="url(#m4h)"/>
+            <text class="sm t-host" x="258" y="298">HTTPS · one connection per pod</text>
+            <rect class="box-infra" x="30" y="316" width="440" height="44" rx="4"/>
+            <text class="ttl" x="250" y="343" text-anchor="middle">INGEST EDGE</text>
+            <text class="sm-f" x="30" y="386">Fold ratio is limited to what a single pod observed —</text>
+            <text class="sm-f" x="30" y="400">40 pods each report the same storm separately.</text>
+
+            <!-- B: host -->
+            <rect class="box-host" x="530" y="44" width="440" height="108" rx="4"/>
+            <text class="ttl t-host" x="544" y="66">HOST PROCESS — 4 responsibilities</text>
+            <rect class="box" x="544" y="78" width="196" height="26" rx="2"/><text class="lbl" x="554" y="96">capture · ring buffer</text>
+            <rect class="box" x="544" y="110" width="196" height="26" rx="2"/><text class="lbl" x="554" y="128">fingerprint · fold</text>
+            <rect class="box" x="756" y="78" width="200" height="26" rx="2"/><text class="lbl" x="766" y="96">serialize</text>
+            <rect class="box-fold" x="756" y="110" width="200" height="26" rx="2"/><text class="lbl" x="766" y="128">write to socket · forget</text>
+
+            <path class="e-fold" d="M750 152 V 186" marker-end="url(#m4)"/>
+            <text class="sm t-fold" x="758" y="173">UDS ~30µs · no TLS · file-permission auth</text>
+
+            <rect class="box-infra v2" x="530" y="186" width="440" height="130" rx="4"/>
+            <text class="ttl" x="544" y="208">BUGBUSTER AGENT — our process, their machine</text>
+            <rect class="box-drop" x="544" y="220" width="196" height="24" rx="2"/><text class="lbl" x="554" y="237">compress + dictionary</text>
+            <rect class="box-drop" x="544" y="250" width="196" height="24" rx="2"/><text class="lbl" x="554" y="267">TLS + certs</text>
+            <rect class="box-drop" x="544" y="280" width="196" height="24" rx="2"/><text class="lbl" x="554" y="297">retry + breaker</text>
+            <rect class="box-drop" x="756" y="220" width="200" height="24" rx="2"/><text class="lbl" x="766" y="237">connection pool</text>
+            <rect class="box-fold" x="756" y="250" width="200" height="24" rx="2"/><text class="lbl" x="766" y="267">cross-process FOLD</text>
+            <rect class="box-fold" x="756" y="280" width="200" height="24" rx="2"/><text class="lbl" x="766" y="297">disk spool (allowed here)</text>
+
+            <path class="e" d="M750 316 V 344" marker-end="url(#m4)"/>
+            <rect class="box-infra" x="530" y="344" width="440" height="44" rx="4"/>
+            <text class="ttl" x="750" y="371" text-anchor="middle">INGEST EDGE</text>
+            <text class="sm t-fold" x="530" y="414">Agent sees the whole node, so the fold ratio improves by roughly the pod count.</text>
+          </svg>
+        </div>
+        <figcaption><b>The five red rows did not disappear — they relocated.</b> That is the entire
+          difference, and it is why the SDK must ship with a swappable transport boundary in v1 even
+          though the agent lands in v2: retrofitting the seam later means re-releasing every
+          customer's SDK.</figcaption>
+      </figure>
+    </section>
+
+    <!-- ══════════════════ PLATE 05 ══════════════════ -->
+    <section class="plate" id="p5">
+      <div class="plate-head">
+        <span class="plate-num">05</span>
+        <h2>Backpressure — a closed loop and a state machine</h2>
+      </div>
+      <p class="plate-sub">Two independent mechanisms. The loop protects us from customers; the
+        state machine protects customers from us. Neither works without the other, and the second is
+        how a monitoring agent avoids becoming the outage it was bought to detect.</p>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 1000 290" role="img" aria-label="A closed control loop: the SDK sends envelopes to the ingest edge, which reports counts and quota to the control plane, which returns sampling directives, suppression lists and retry-after headers to the SDK on every response.">
+            <defs>
+              <marker id="m5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk"/></marker>
+              <marker id="m5i" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk-i"/></marker>
+            </defs>
+            <text class="zt" x="36" y="32">5A · THE DIRECTIVE LOOP — WHY THE SDK STOPS GENERATING, NOT JUST SENDING</text>
+
+            <rect class="box-host" x="60" y="76" width="200" height="72" rx="4"/>
+            <text class="ttl" x="160" y="104" text-anchor="middle">SDK sampler</text>
+            <text class="sm" x="160" y="121" text-anchor="middle">holds current directive</text>
+            <text class="sm-f" x="160" y="137" text-anchor="middle">config_version 42</text>
+
+            <rect class="box-infra" x="400" y="76" width="200" height="72" rx="4"/>
+            <text class="ttl" x="500" y="104" text-anchor="middle">Ingest edge</text>
+            <text class="sm" x="500" y="121" text-anchor="middle">token bucket per org</text>
+            <text class="sm-f" x="500" y="137" text-anchor="middle">observes real rate</text>
+
+            <rect class="box-infra" x="740" y="76" width="200" height="72" rx="4"/>
+            <text class="ttl" x="840" y="104" text-anchor="middle">Control plane</text>
+            <text class="sm" x="840" y="121" text-anchor="middle">decides the budget</text>
+            <text class="sm-f" x="840" y="137" text-anchor="middle">per org, per type, per fp</text>
+
+            <path class="e" d="M260 104 H 400" marker-end="url(#m5)"/>
+            <text class="sm" x="272" y="96">envelopes</text>
+            <path class="e" d="M600 104 H 740" marker-end="url(#m5)"/>
+            <text class="sm" x="612" y="96">counts + quota burn</text>
+
+            <path class="e-ctl" d="M840 148 V 214 H 160 V 148" marker-end="url(#m5i)"/>
+            <text class="sm t-infra" x="330" y="206">X-BB-Sample-Directive · X-BB-Suppress-Fingerprints · X-BB-Retry-After · X-BB-Config-Version</text>
+            <text class="ttl t-infra" x="60" y="252">The SDK stops producing at the source.</text>
+            <text class="lbl" x="60" y="270">Rejecting traffic at the edge still cost the host CPU to serialize, compress and transmit it. This is the only intervention that costs them nothing.</text>
+          </svg>
+        </div>
+        <figcaption><b>Per-fingerprint suppression is the highest-leverage header.</b> Once we hold
+          50,000 samples of one fingerprint, the 50,001st payload carries no information — only its
+          count does. Telling the SDK that is possible only because fingerprinting happens
+          client-side.</figcaption>
+      </figure>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 1000 250" role="img" aria-label="Circuit breaker state machine with three states: closed, open and half-open, with transitions on consecutive failures, a jittered cooldown, a successful probe and a failed probe.">
+            <defs>
+              <marker id="m6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk"/></marker>
+              <marker id="m6d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk-d"/></marker>
+              <marker id="m6f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk-f"/></marker>
+            </defs>
+            <text class="zt" x="36" y="32">5B · TRANSPORT CIRCUIT BREAKER — HOW WE FAIL WITHOUT TAKING THE HOST WITH US</text>
+
+            <rect class="box-fold" x="90" y="86" width="180" height="62" rx="4"/>
+            <text class="ttl" x="180" y="112" text-anchor="middle">CLOSED</text>
+            <text class="sm" x="180" y="130" text-anchor="middle">traffic flows normally</text>
+
+            <rect class="box-drop" x="410" y="86" width="180" height="62" rx="4"/>
+            <text class="ttl" x="500" y="112" text-anchor="middle">OPEN</text>
+            <text class="sm" x="500" y="130" text-anchor="middle">fail instantly · no socket</text>
+
+            <rect class="box" x="730" y="86" width="180" height="62" rx="4"/>
+            <text class="ttl" x="820" y="112" text-anchor="middle">HALF-OPEN</text>
+            <text class="sm" x="820" y="130" text-anchor="middle">exactly one probe</text>
+
+            <path class="e-drop" d="M270 108 H 410" marker-end="url(#m6d)"/>
+            <text class="sm t-drop" x="278" y="100">5 consecutive failures</text>
+            <path class="e" d="M590 108 H 730" marker-end="url(#m6)"/>
+            <text class="sm" x="598" y="100">cooldown 30 s, full jitter</text>
+
+            <path class="e-fold" d="M820 148 V 190 H 180 V 148" marker-end="url(#m6f)"/>
+            <text class="sm t-fold" x="440" y="182">probe succeeds → resume</text>
+            <path class="e-drop" d="M880 86 V 58 H 530 V 86" marker-end="url(#m6d)"/>
+            <text class="sm t-drop" x="640" y="50">probe fails → back off again</text>
+
+            <text class="lbl" x="90" y="228">While OPEN, capture continues and the ring buffer keeps counting — the app never learns we are down. Full jitter on the cooldown is what stops</text>
+            <text class="lbl" x="90" y="244">thousands of customer fleets from retrying in the same second and turning our recovery into a self-inflicted denial of service.</text>
+          </svg>
+        </div>
+        <figcaption><b>The OPEN state is a feature, not a degradation.</b> Attempting a connection
+          per event while our API is unreachable burns the host's sockets and threads on work that
+          is guaranteed to fail; failing instantly is nearly free.</figcaption>
+      </figure>
+    </section>
+
+    <!-- ══════════════════ PLATE 06 ══════════════════ -->
+    <section class="plate" id="p6">
+      <div class="plate-head">
+        <span class="plate-num">06</span>
+        <h2>Ingest edge — six stages, none of which read the payload</h2>
+      </div>
+      <p class="plate-sub">The front door does the least work of any component in the system. It
+        validates an envelope header, checks a quota, reads one priority byte, appends opaque bytes,
+        and returns 202. Parsing untrusted input is both the latency floor and the security surface,
+        so it happens later, where a crash is a retry.</p>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 1000 250" role="img" aria-label="Six ingest edge stages in sequence: terminate TLS, authenticate from an in-memory cache, check the org quota token bucket, validate envelope header and size, read the priority byte to decide shedding, then append to the durable log and return 202 Accepted.">
+            <defs>
+              <marker id="m7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk"/></marker>
+            </defs>
+            <text class="zt" x="21" y="32">INGEST EDGE · STATELESS · HORIZONTALLY SCALABLE · TARGET p99 &lt; 15 ms</text>
+
+            <rect class="box-infra" x="21" y="52" width="148" height="66" rx="4"/>
+            <text class="ttl" x="95" y="78" text-anchor="middle">terminate TLS</text>
+            <text class="sm" x="95" y="94" text-anchor="middle">keep-alive reused</text>
+            <text class="sm-f" x="95" y="108" text-anchor="middle">at the load balancer</text>
+
+            <rect class="box-infra" x="183" y="52" width="148" height="66" rx="4"/>
+            <text class="ttl" x="257" y="78" text-anchor="middle">authenticate</text>
+            <text class="sm" x="257" y="94" text-anchor="middle">key → org</text>
+            <text class="sm-f" x="257" y="108" text-anchor="middle">in-memory, never a DB</text>
+
+            <rect class="box-infra" x="345" y="52" width="148" height="66" rx="4"/>
+            <text class="ttl" x="419" y="78" text-anchor="middle">quota</text>
+            <text class="sm" x="419" y="94" text-anchor="middle">token bucket</text>
+            <text class="sm-f" x="419" y="108" text-anchor="middle">local pre-check + Redis</text>
+
+            <rect class="box-infra" x="507" y="52" width="148" height="66" rx="4"/>
+            <text class="ttl" x="581" y="78" text-anchor="middle">envelope header</text>
+            <text class="sm" x="581" y="94" text-anchor="middle">size + framing only</text>
+            <text class="sm-f" x="581" y="108" text-anchor="middle">body stays opaque</text>
+
+            <rect class="box-infra" x="669" y="52" width="148" height="66" rx="4"/>
+            <text class="ttl" x="743" y="78" text-anchor="middle">priority byte</text>
+            <text class="sm" x="743" y="94" text-anchor="middle">shed or admit</text>
+            <text class="sm-f" x="743" y="108" text-anchor="middle">stamped at the edge</text>
+
+            <rect class="box-fold" x="831" y="52" width="148" height="66" rx="4"/>
+            <text class="ttl" x="905" y="78" text-anchor="middle">append → 202</text>
+            <text class="sm" x="905" y="94" text-anchor="middle">durable, unparsed</text>
+            <text class="sm-f" x="905" y="108" text-anchor="middle">directives on the way out</text>
+
+            <path class="e" d="M169 85 H 183" marker-end="url(#m7)"/>
+            <path class="e" d="M331 85 H 345" marker-end="url(#m7)"/>
+            <path class="e" d="M493 85 H 507" marker-end="url(#m7)"/>
+            <path class="e" d="M655 85 H 669" marker-end="url(#m7)"/>
+            <path class="e" d="M817 85 H 831" marker-end="url(#m7)"/>
+
+            <path class="e" d="M21 146 H 979" stroke-dasharray="3 3"/>
+            <path class="e" d="M21 140 V 152"/><path class="e" d="M979 140 V 152"/>
+            <text class="lbl" x="500" y="176" text-anchor="middle">No stage above ever decompresses or parses the payload. Zip bombs, 200-deep JSON and pathological regex are the processing tier's problem.</text>
+            <text class="sm-f" x="500" y="200" text-anchor="middle">202 Accepted is the honest status code here: we have durably taken the data, and we have not looked at it.</text>
+            <text class="sm-f" x="500" y="222" text-anchor="middle">4xx is never retried by the SDK · 5xx and network errors are, three times, jittered</text>
+          </svg>
+        </div>
+        <figcaption><b>Auth from memory, quota from a token bucket, append and go.</b> Every stage
+          that could require a round trip has been replaced by something local, because the p99
+          target leaves no room for a dependency.</figcaption>
+      </figure>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 1000 320" role="img" aria-label="The shed ladder: debug logs are dropped first, then info logs, then spans on healthy endpoints, then aggregate counts; below a hard line, 5xx exemplars and first sightings of a new fingerprint are never shed.">
+            <defs>
+              <marker id="m8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk-d"/></marker>
+            </defs>
+            <text class="zt" x="36" y="32">THE SHED LADDER · READ TOP TO BOTTOM AS PRESSURE RISES</text>
+
+            <rect class="box-drop" x="200" y="48" width="600" height="30" rx="3"/>
+            <text class="lbl" x="214" y="68">debug logs</text>
+            <text class="sm" x="700" y="68">priority 0 · shed first, shed freely</text>
+            <rect class="box-drop" x="200" y="82" width="600" height="30" rx="3" opacity="0.82"/>
+            <text class="lbl" x="214" y="102">info logs</text>
+            <text class="sm" x="700" y="102">priority 1</text>
+            <rect class="box-drop" x="200" y="116" width="600" height="30" rx="3" opacity="0.64"/>
+            <text class="lbl" x="214" y="136">spans on healthy endpoints</text>
+            <text class="sm" x="700" y="136">priority 2 · no error, no tail</text>
+            <rect class="box-drop" x="200" y="150" width="600" height="30" rx="3" opacity="0.46"/>
+            <text class="lbl" x="214" y="170">aggregate counts</text>
+            <text class="sm" x="700" y="170">priority 3 · loses accuracy, not events</text>
+
+            <line x1="140" y1="196" x2="860" y2="196" stroke="var(--ink)" stroke-width="2"/>
+            <text class="ttl" x="140" y="214">NEVER SHED — a product commitment, not an engineering preference</text>
+
+            <rect class="box-fold" x="200" y="226" width="600" height="30" rx="3"/>
+            <text class="lbl" x="214" y="246">5xx exemplars</text>
+            <text class="sm" x="700" y="246">priority 8</text>
+            <rect class="box-fold" x="200" y="260" width="600" height="30" rx="3"/>
+            <text class="lbl" x="214" y="280">first sighting of a new fingerprint</text>
+            <text class="sm" x="700" y="280">priority 9 · highest-information byte in the system</text>
+
+            <path class="e-drop" d="M170 48 V 180" marker-end="url(#m8)"/>
+            <text class="sm t-drop" x="150" y="120" transform="rotate(-90 150 120)">pressure rises</text>
+            <text class="sm-f" x="36" y="308">The priority byte is computed in the SDK and read at the edge, so shedding never requires opening the payload.</text>
+          </svg>
+        </div>
+        <figcaption><b>Order matters more than threshold.</b> Any system can drop traffic under load;
+          the design question is whether the thing it keeps is the thing an engineer needed at 3am.
+          A novel fingerprint appearing for the first time outranks a million repeats of a known one.</figcaption>
+      </figure>
+    </section>
+
+    <!-- ══════════════════ PLATE 07 ══════════════════ -->
+    <section class="plate" id="p7">
+      <div class="plate-head">
+        <span class="plate-num">07</span>
+        <h2>Sampling — where the decision is made, and what it costs to wait</h2>
+      </div>
+      <p class="plate-sub">The same request, drawn three times. The only variable is when the keep
+        or drop decision happens, and every consequence in the design follows from that one choice
+        of moment.</p>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 1000 420" role="img" aria-label="Three timelines of the same request. Head sampling decides at t equals zero before the outcome is known. Deferred in-process sampling decides when the request completes, while spans are still buffered locally. Tail sampling decides after a collector hold window, once spans from every service have arrived.">
+            <defs>
+              <marker id="m9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk"/></marker>
+            </defs>
+
+            <!-- time axis -->
+            <line class="rail-l" x1="150" y1="34" x2="150" y2="392" stroke-dasharray="2 3"/>
+            <line class="rail-l" x1="620" y1="34" x2="620" y2="392" stroke-dasharray="2 3"/>
+            <line class="rail-l" x1="870" y1="34" x2="870" y2="392" stroke-dasharray="2 3"/>
+            <text class="sm-f" x="150" y="26" text-anchor="middle">request starts</text>
+            <text class="sm-f" x="620" y="26" text-anchor="middle">request ends</text>
+            <text class="sm-f" x="870" y="26" text-anchor="middle">+20 s hold</text>
+
+            <!-- row 1 -->
+            <text class="ttl" x="20" y="60">HEAD</text>
+            <text class="sm-f" x="20" y="76">cheap</text>
+            <rect class="box" x="150" y="50" width="450" height="12" rx="2"/>
+            <rect class="box" x="176" y="66" width="90" height="12" rx="2"/>
+            <rect class="box" x="280" y="66" width="290" height="12" rx="2"/>
+            <rect class="box" x="400" y="82" width="160" height="12" rx="2"/>
+            <circle cx="150" cy="110" r="5" fill="var(--danger)"/>
+            <path class="e-drop" d="M150 105 V 62"/>
+            <text class="sm t-drop" x="162" y="114">decision here — outcome is not yet known. Keeping 1% means keeping 1% of the errors too.</text>
+
+            <!-- row 2 -->
+            <text class="ttl t-fold" x="20" y="168">DEFERRED</text>
+            <text class="sm-f" x="20" y="184">ours, v1</text>
+            <rect class="box-fold" x="150" y="158" width="450" height="12" rx="2"/>
+            <rect class="box-fold" x="176" y="174" width="90" height="12" rx="2"/>
+            <rect class="box-fold" x="280" y="174" width="290" height="12" rx="2"/>
+            <rect class="box-fold" x="400" y="190" width="160" height="12" rx="2"/>
+            <path class="e-fold" d="M150 214 H 616" marker-end="url(#m9)"/>
+            <path class="e-fold" d="M150 208 V 220"/>
+            <text class="sm t-fold" x="200" y="230">held in the process that created them — no network, no coordination</text>
+            <circle cx="620" cy="214" r="5" fill="var(--fold)"/>
+            <text class="sm t-fold" x="632" y="206">errored or over p95?</text>
+            <text class="sm t-fold" x="632" y="220">retro-upgrade every span</text>
+
+            <!-- row 3 -->
+            <text class="ttl" x="20" y="278">TAIL</text>
+            <text class="sm-f" x="20" y="294">v2</text>
+            <rect class="box" x="150" y="268" width="450" height="12" rx="2"/>
+            <rect class="box" x="176" y="284" width="90" height="12" rx="2"/>
+            <rect class="box" x="280" y="284" width="290" height="12" rx="2"/>
+            <rect class="box" x="400" y="300" width="160" height="12" rx="2"/>
+            <rect class="box-infra" x="620" y="316" width="250" height="34" rx="3"/>
+            <text class="sm" x="632" y="330">collector holds the whole trace</text>
+            <text class="sm-f" x="632" y="344">spans consistent-hashed by trace_id</text>
+            <circle cx="870" cy="333" r="5" fill="var(--infra)"/>
+            <text class="sm t-infra" x="882" y="337">correct globally</text>
+
+            <line class="rail-l" x1="20" y1="368" x2="980" y2="368"/>
+            <text class="lbl" x="20" y="390">Cross-service coherence without coordination: propagate a random threshold r in the trace header; each service keeps if r &lt; its own rate. Services</text>
+            <text class="lbl" x="20" y="406">running different rates still produce whole traces. Every stored record carries adjusted_count, so a 1-in-20 sample still reports ~50,000 — never 2,500.</text>
+          </svg>
+        </div>
+        <figcaption><b>Deferred sampling captures most of tail sampling's value for almost none of
+          its cost.</b> The outcome signal that makes tail sampling correct is available locally the
+          moment the request finishes — no distributed buffer required, because the spans never
+          left.</figcaption>
+      </figure>
+    </section>
+
+    <!-- ══════════════════ PLATE 08 ══════════════════ -->
+    <section class="plate" id="p8">
+      <div class="plate-head">
+        <span class="plate-num">08</span>
+        <h2>Storage fan-out — and the replay that makes the algorithm improvable</h2>
+      </div>
+      <p class="plate-sub">Three consumers read the same partitioned log independently. The replay
+        arrow is the reason the log exists: when the fingerprinting algorithm improves, history is
+        recomputed rather than abandoned.</p>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg class="dg" viewBox="0 0 1000 470" role="img" aria-label="Four log partitions feed three independent consumer pipelines, which write to Postgres, a columnar store and an object store; a query API reads all three and serves the dashboard, AI debugger and alerts. A dashed replay arrow returns from the partitions to the consumers.">
+            <defs>
+              <marker id="mA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk"/></marker>
+              <marker id="mAi" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk-i"/></marker>
+            </defs>
+            <text class="zt" x="36" y="30">DURABLE LOG</text>
+            <text class="zt" x="272" y="30">CONSUMERS · INDEPENDENT OFFSETS</text>
+            <text class="zt" x="556" y="30">STORES</text>
+            <text class="zt" x="810" y="30">SURFACE</text>
+
+            <rect class="box-infra" x="36" y="46" width="176" height="32" rx="3"/>
+            <text class="lbl" x="46" y="66">p0 · org_a</text>
+            <rect class="box-infra" x="36" y="84" width="176" height="32" rx="3"/>
+            <text class="lbl" x="46" y="104">p1 · org_b</text>
+            <rect class="box-infra" x="36" y="122" width="176" height="32" rx="3"/>
+            <text class="lbl" x="46" y="142">p2 · org_c</text>
+            <rect class="box-drop" x="36" y="160" width="176" height="32" rx="3"/>
+            <text class="lbl" x="46" y="180">whale · own topic</text>
+            <text class="sm-f" x="36" y="212">partition key = org_id, so one</text>
+            <text class="sm-f" x="36" y="226">tenant's storm is one partition's</text>
+            <text class="sm-f" x="36" y="240">problem, not everyone's</text>
+
+            <rect class="box-fold" x="272" y="46" width="212" height="70" rx="4"/>
+            <text class="ttl" x="286" y="68">Fold merger</text>
+            <text class="sm" x="286" y="85">merge HLL across pods</text>
+            <text class="sm" x="286" y="100">merge DDSketch, top-K</text>
+            <rect class="box-infra" x="272" y="130" width="212" height="70" rx="4"/>
+            <text class="ttl" x="286" y="152">Correlator</text>
+            <text class="sm" x="286" y="169">release → deploy → commit</text>
+            <text class="sm" x="286" y="184">resolve to file:line</text>
+            <rect class="box-infra" x="272" y="214" width="212" height="70" rx="4"/>
+            <text class="ttl" x="286" y="236">Alert evaluator</text>
+            <text class="sm" x="286" y="253">new fingerprint fires first</text>
+            <text class="sm" x="286" y="268">rate spike boosts sampling</text>
+
+            <path class="e" d="M212 62 H 272" marker-end="url(#mA)"/>
+            <path class="e" d="M212 138 H 272" marker-end="url(#mA)"/>
+            <path class="e" d="M212 176 H 272 " marker-end="url(#mA)"/>
+
+            <rect class="box" x="556" y="46" width="212" height="70" rx="4"/>
+            <text class="ttl" x="570" y="68">Postgres</text>
+            <text class="sm" x="570" y="85">issues · fingerprints</text>
+            <text class="sm-f" x="570" y="100">the relational truth</text>
+            <rect class="box" x="556" y="130" width="212" height="70" rx="4"/>
+            <text class="ttl" x="570" y="152">Columnar / TSDB</text>
+            <text class="sm" x="570" y="169">time-bucketed aggregates</text>
+            <text class="sm-f" x="570" y="184">sketches stored serialized</text>
+            <rect class="box" x="556" y="214" width="212" height="70" rx="4"/>
+            <text class="ttl" x="570" y="236">Object store</text>
+            <text class="sm" x="570" y="253">exemplars · raw envelopes</text>
+            <text class="sm-f" x="570" y="268">cold, cheap, replayable</text>
+
+            <path class="e" d="M484 81 H 556" marker-end="url(#mA)"/>
+            <path class="e" d="M484 165 H 556" marker-end="url(#mA)"/>
+            <path class="e" d="M484 249 H 556" marker-end="url(#mA)"/>
+
+            <rect class="box-infra" x="810" y="46" width="154" height="60" rx="4"/>
+            <text class="ttl" x="887" y="72" text-anchor="middle">Query API</text>
+            <text class="sm" x="887" y="90" text-anchor="middle">+ fidelity</text>
+            <path class="e" d="M768 81 H 810" marker-end="url(#mA)"/>
+            <path class="e" d="M768 165 H 800 V 96 H 810" marker-end="url(#mA)"/>
+            <path class="e" d="M768 249 H 790 V 100 H 810" marker-end="url(#mA)"/>
+
+            <rect class="box" x="810" y="130" width="154" height="40" rx="4"/>
+            <text class="lbl" x="887" y="155" text-anchor="middle">Dashboard</text>
+            <rect class="box v2" x="810" y="182" width="154" height="40" rx="4"/>
+            <text class="lbl" x="887" y="207" text-anchor="middle">AI Debugger</text>
+            <rect class="box v2" x="810" y="234" width="154" height="40" rx="4"/>
+            <text class="lbl" x="887" y="259" text-anchor="middle">Alerts → Slack</text>
+            <path class="e" d="M887 106 V 130" marker-end="url(#mA)"/>
+            <path class="e" d="M887 170 V 182" marker-end="url(#mA)"/>
+            <path class="e" d="M887 222 V 234" marker-end="url(#mA)"/>
+
+            <!-- replay -->
+            <path class="e-ctl" d="M124 192 V 330 H 378 V 284" marker-end="url(#mAi)"/>
+            <text class="ttl t-infra" x="140" y="324">REPLAY from offset 0</text>
+            <text class="lbl" x="140" y="352">Reading a log does not consume it. When the fingerprint algorithm changes, every consumer can be rewound and history recomputed</text>
+            <text class="lbl" x="140" y="368">under the new grouping — the alternative is living with your first attempt forever.</text>
+            <text class="sm-f" x="140" y="396">This is also the disaster-recovery story: the stores are all derived state, and the log is the only thing that must survive.</text>
+            <text class="sm-f" x="140" y="416">Retention on the log is therefore a correctness decision, not a cost decision.</text>
+          </svg>
+        </div>
+        <figcaption><b>Every store here is derived; only the log is authoritative.</b> That inversion
+          is what makes the fingerprinting algorithm safe to iterate on — a design that writes
+          grouping decisions irreversibly into storage can never improve them.</figcaption>
+      </figure>
+    </section>
+
+    <!-- ══════════════════ BUDGETS ══════════════════ -->
+    <h3 id="budget">Budgets — every number is a design target</h3>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>Boundary</th><th>Budget</th><th>Dominated by</th><th>Enforcement</th></tr></thead>
+        <tbody>
+          <tr><td><b>Hot path · log</b></td><td>&lt; 5 µs</td><td>context lookup + ring claim</td><td>benchmark asserted in CI</td></tr>
+          <tr><td><b>Hot path · exception</b></td><td>&lt; 50 µs</td><td>V8 stack formatting (unavoidable)</td><td>benchmark asserted in CI</td></tr>
+          <tr><td><b>SDK memory</b></td><td>8 MB</td><td>ring buffer + fold table</td><td>hard cap → drop + count</td></tr>
+          <tr><td><b>Live fingerprints</b></td><td>10,000 / process / window</td><td>fold table cardinality</td><td>coarsen, never OOM</td></tr>
+          <tr><td><b>Batch size</b></td><td>512 KB or 5 s</td><td>whichever fires first</td><td>plus flush on shutdown</td></tr>
+          <tr><td><b>Shutdown flush</b></td><td>≤ 2 s</td><td>in-flight batch</td><td>hard timeout, never blocks a deploy</td></tr>
+          <tr><td><b>Connect / total timeout</b></td><td>2 s / 10 s</td><td>network</td><td>then breaker counts a failure</td></tr>
+          <tr><td><b>Retries</b></td><td>3, jittered</td><td>5xx and network only</td><td>4xx never retried</td></tr>
+          <tr><td><b>Ingest edge</b></td><td>p99 &lt; 15 ms</td><td>quota check + append</td><td>no DB on the path</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Volume — one mid-size customer, 500 req/s at 1% errors</h3>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>Stage</th><th class="num">Per day</th><th class="num">Ratio</th><th>What changed</th></tr></thead>
+        <tbody>
+          <tr><td>Naive, event per event</td><td class="num">2.2 GB</td><td class="num">1×</td><td>432,000 errors × 5 KB</td></tr>
+          <tr><td>+ edge fold</td><td class="num">44 MB</td><td class="num">50×</td><td>storms are bursty and repetitive</td></tr>
+          <tr><td>+ zstd, trained dictionary</td><td class="num"><b>15 MB</b></td><td class="num"><b>147×</b></td><td>stack traces are highly redundant</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <span class="note-t">Why the fold is architecture, not optimization</span>
+      <p>The gap between 2.2 GB and 15 MB per customer per day is the gap between a business and an
+        S3 bill with a dashboard attached. A fold added later cannot reach it, because the wire
+        format, the storage schema and the query layer would all have been built around events.</p>
+    </div>
+
+    <!-- ══════════════════ FAILURE MATRIX ══════════════════ -->
+    <h3 id="failure">Failure matrix — what breaks, and who feels it</h3>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>Failure</th><th>Host impact</th><th>Data impact</th><th>Mechanism that contains it</th></tr></thead>
+        <tbody>
+          <tr><td>Our API is down</td><td><span class="pill p-v1">none</span></td><td>dropped, counted</td><td>circuit breaker opens; capture keeps counting</td></tr>
+          <tr><td>Our API is slow</td><td><span class="pill p-v1">none</span></td><td>batches delayed</td><td>hard timeouts; worker never touches request thread</td></tr>
+          <tr><td>Error storm, 50k/s</td><td><span class="pill p-v1">bounded</span></td><td>folded, exact counts kept</td><td>fold + per-fingerprint suppression</td></tr>
+          <tr><td>Ring buffer full</td><td><span class="pill p-v1">none</span></td><td>dropped, counted</td><td>fixed byte cap; drop rather than grow</td></tr>
+          <tr><td>Fold table saturated</td><td><span class="pill p-v1">bounded</span></td><td>grouping coarsens</td><td>strip frames until groups collide</td></tr>
+          <tr><td>Worker thread dies</td><td><span class="pill p-v1">none</span></td><td>total loss until restart</td><td>meta record stops arriving → we alert them</td></tr>
+          <tr><td>Host process forks</td><td><span class="pill p-crit">silent loss</span></td><td>total, silent</td><td><b>the dangerous one</b> — needs post-fork re-init</td></tr>
+          <tr><td>SDK errors internally</td><td><span class="pill p-crit">crash risk</span></td><td>—</td><td>every entry point wrapped; recursion guard</td></tr>
+          <tr><td>Agent down (mode B)</td><td><span class="pill p-v1">none</span></td><td>dropped at socket</td><td>non-blocking write; optional fallback to direct</td></tr>
+          <tr><td>One tenant floods ingest</td><td><span class="pill p-host">theirs only</span></td><td>their quota only</td><td>per-org partition + token bucket</td></tr>
+          <tr><td>Processing tier lags</td><td><span class="pill p-v1">none</span></td><td>dashboard goes stale</td><td>log buffers; consumers catch up</td></tr>
+          <tr><td>Fingerprint algorithm wrong</td><td><span class="pill p-v1">none</span></td><td>recoverable</td><td>replay from offset 0 under the new algorithm</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose">
+      <p style="margin-top:22px"><strong>Two rows in that table are qualitatively different from
+        the rest.</strong> Fork-safety and internal SDK errors are the only failures that damage the
+        host rather than merely losing our own data — and both are silent. Everything else degrades
+        into a counted drop, which the meta record surfaces honestly. These two are the reason the
+        invariant list is a test suite and not a memo.</p>
+    </div>
+
+    <!-- ══════════════════ DECISIONS ══════════════════ -->
+    <h3 id="decisions">Open decisions — these gate the build plan</h3>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>#</th><th>Decision</th><th>Working default</th><th>What it changes</th></tr></thead>
+        <tbody>
+          <tr><td>01</td><td><b>SaaS or self-hosted first</b></td><td><span class="pill p-v2">SaaS-shaped</span></td><td>SaaS makes quotas, multi-tenancy and noisy-neighbour isolation day-one work; self-hosted defers most of plates 05–06</td></tr>
+          <tr><td>02</td><td><b>First SDK language</b></td><td><span class="pill p-v2">Node</span></td><td>Node's worker thread moves serialization and compression off the event loop cleanly; Python fights the GIL and fork-safety, which promotes the agent from optional to near-mandatory</td></tr>
+          <tr><td>03</td><td><b>Agent in v1 or v2</b></td><td><span class="pill p-v2">v2, seam in v1</span></td><td>The transport boundary must be swappable from the first release — retrofitting it means re-releasing every customer's SDK</td></tr>
+          <tr><td>04</td><td><b>Scale target for v1</b></td><td><span class="pill p-v2">format big, infra small</span></td><td>Design the wire format and the fold for the larger scale; build the infrastructure for the smaller one. Format is what you cannot change later</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose">
+      <p style="margin-top:22px">Everything above is drawn as a target, not a measurement. The first
+        real work is the benchmark harness from plate 02 — until the hot path is measured under load
+        in a host application, <em>&ldquo;&lt; 5 µs&rdquo;</em> is an intention. The second is the
+        fold table from plate 03, because its cardinality behaviour under a storm decides whether
+        the ratio in the volume table survives contact with production.</p>
+    </div>
+
+    <footer>
+      The BugBuster Blueprint · Draft A · 2026-08-25<br>
+      Companion documents: <b>docs/architecture/ingest-pipeline.md</b> (reasoning and invariants) ·
+      <b>docs/glossary.md</b> (terminology) · <b>doc.md</b> (vision and OpenTelemetry framing)<br>
+      Solid stroke = v1 scope · dashed stroke = deferred to v2 · amber = the host's process ·
+      teal = the fold · red = a counted loss path
+    </footer>
+
+    </main>
+  </div>
+</div>
+</body>
+</html>
