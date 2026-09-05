@@ -9,6 +9,14 @@ cost you the bandwidth.
 This is a real distributed-systems project: the goal is engineering rigor at every layer, even
 though current scale is intentionally small (a few pilot organizations, pre-production).
 
+![BugBuster error telemetry architecture — capture, process, store, analyze, resolve](docs/architecture/error-telemetry-architecture.png)
+
+Solid-outlined boxes are what's actually built and running today (v1); dashed boxes — Kafka/
+Redpanda as a durable log, HyperLogLog/DDSketch aggregation, the AI Debugger, Slack/webhook
+alerts — are the documented scale-up path, not yet built. See
+[`docs/architecture/ingest-pipeline.md`](docs/architecture/ingest-pipeline.md) §10 for exactly
+what triggers building each one.
+
 ## Why it's built this way
 
 Read these before touching the code — they're the reasoning behind every design choice below,
