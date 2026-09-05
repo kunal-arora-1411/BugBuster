@@ -42,14 +42,139 @@ the architecture diagram:
 
 ```bash
 pnpm install
-docker compose -f infra/docker-compose.yml up -d   # local MongoDB
 pnpm build
 pnpm test:unit
 ```
 
-For the full local run-through (Agent, backend, demo app, dashboard, all wired together against
-real MongoDB), see [`docs/runbook.md`](docs/runbook.md). For the API surface, see
-[`docs/api.md`](docs/api.md); for the MongoDB schema, [`docs/schema.md`](docs/schema.md).
+For the API surface, see [`docs/api.md`](docs/api.md); for the MongoDB schema,
+[`docs/schema.md`](docs/schema.md).
+
+## Quickstart: see your first telemetry end-to-end
+
+Five steps, four terminals. By the end, an error thrown in a real Node app will have been
+captured, fingerprinted, and folded by the SDK; carried over a Unix domain socket to the Agent;
+forwarded over HTTPS (zstd-compressed) to the backend; written into a tenant-isolated MongoDB
+database; and shown on the dashboard — every hop real, nothing mocked.
+
+### 0. Prerequisites
+
+Node.js 20+, pnpm 10+, and a MongoDB instance — either local (Docker) or a free
+[MongoDB Atlas](https://www.mongodb.com/cloud/atlas) cluster. If you're using Atlas, keep the
+connection string out of every file — pass it only as an environment variable, never commit it
+(it has credentials embedded in it, unlike a local `mongodb://localhost` URI).
+
+### 1. Install and build
+
+```bash
+pnpm install
+pnpm build
+```
+
+### 2. Start MongoDB
+
+```bash
+docker compose -f infra/docker-compose.yml up -d
+```
+
+(Using Atlas instead? Skip this — just use your connection string in place of
+`mongodb://localhost:27017` in step 3 and in Terminal A of step 4 below, and make sure your IP is
+allowlisted under Atlas → Network Access.)
+
+### 3. Create an organization
+
+There's no signup flow yet — a CLI creates the org record directly:
+
+```bash
+cd packages/backend
+pnpm create-org org_demo "Demo Org" bugbuster_org_demo demo-api-key
+cd ../..
+```
+
+`demo-api-key` is the API key you'll use in every step below — pick your own if you like.
+
+### 4. Start the three long-running processes (one terminal each)
+
+**Terminal A — backend**
+
+```bash
+cd packages/backend
+BUGBUSTER_CONTROL_DB_URI=mongodb://localhost:27017 PORT=8080 pnpm start
+```
+
+**Terminal B — Agent**
+
+```bash
+cd packages/agent
+BUGBUSTER_AGENT_SOCKET=/tmp/bugbuster-agent.sock \
+BUGBUSTER_BACKEND_URL=http://localhost:8080/ingest \
+BUGBUSTER_API_KEY=demo-api-key \
+pnpm start
+```
+
+On Windows, use a named pipe path instead of a filesystem path:
+`$env:BUGBUSTER_AGENT_SOCKET = "\\.\pipe\bugbuster-agent"` (PowerShell).
+
+**Terminal C — the instrumented demo app**
+
+```bash
+cd examples/demo-app
+BUGBUSTER_API_KEY=demo-api-key \
+BUGBUSTER_AGENT_SOCKET=/tmp/bugbuster-agent.sock \
+pnpm dev
+```
+
+### 5. Generate some telemetry
+
+```bash
+curl http://localhost:3000/throw
+curl http://localhost:3000/throw   # again — folds into the SAME issue, count becomes 2
+```
+
+### 6. See it
+
+**The dashboard** (this is the real answer to "where do I see the telemetry"):
+
+```bash
+cd packages/dashboard
+pnpm dev
+```
+
+Open **http://localhost:5173**, enter:
+- Backend URL: `http://localhost:8080`
+- API key: `demo-api-key`
+
+Click **Load issues** — one row: the fingerprinted error, `count: 2`, and a green "exact" fidelity
+badge. Click the row for the full JSON, including which exemplar events are attached.
+
+**Or the raw API**, if you'd rather skip the browser:
+
+```bash
+curl http://localhost:8080/issues -H "Authorization: Bearer demo-api-key"
+```
+
+### What you just saw
+
+Two identical throws became **one issue with count 2**, not two separate log lines — that's the
+whole thesis of this project: fingerprinting and folding happen client-side, in the SDK, before
+anything crosses the network. The path that data actually took:
+
+```text
+demo-app (SDK captures → fingerprints → folds)
+   │  UDS / named pipe
+   ▼
+Agent (cross-process fold merge, zstd compression)
+   │  HTTPS
+   ▼
+Backend (tenant-isolated MongoDB write)
+   │
+   ▼
+Dashboard (Query API)
+```
+
+Every hop above is exercised for real, automatically, in
+[`examples/demo-app/test/full-pipeline.test.ts`](examples/demo-app/test/full-pipeline.test.ts) —
+run `pnpm --filter @bugbuster/demo-app test:integration` to see it happen without touching a
+terminal by hand.
 
 ## Status
 
