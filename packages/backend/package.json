@@ -1,0 +1,28 @@
+{
+  "name": "@bugbuster/backend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "typecheck": "tsc -b",
+    "start": "node dist/index.js",
+    "create-org": "node dist/create-org-cli.js",
+    "test": "pnpm run test:unit",
+    "test:unit": "vitest run test/unit",
+    "test:integration": "vitest run test/integration"
+  },
+  "dependencies": {
+    "@bugbuster/types": "workspace:*",
+    "fastify": "^5.2.0",
+    "mongodb": "^6.12.0"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^10.1.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

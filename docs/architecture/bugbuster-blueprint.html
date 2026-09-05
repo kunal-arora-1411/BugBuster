@@ -193,15 +193,16 @@
       <p class="tb-eyebrow">Drawing set · error-first observability platform</p>
       <h1>The BugBuster Blueprint</h1>
       <p class="tb-thesis">Eight plates covering the complete collection path — from the microsecond
-        inside a customer's request thread to the durable log, the storage fan-out, and the query
-        surface. Every number shown is a design target, not a measurement.</p>
+        inside a customer's request thread, through a required host-local agent, to MongoDB and
+        the query surface. Plates 01–07 are the v1 build; plate 08 is the v2 growth path. Every
+        number shown is a design target, not a measurement.</p>
     </div>
     <div class="tb-grid">
-      <div class="tb-cell"><span class="tb-k">Revision</span><span class="tb-v">Draft A</span></div>
-      <div class="tb-cell"><span class="tb-k">Date</span><span class="tb-v">2026-08-25</span></div>
-      <div class="tb-cell"><span class="tb-k">Status</span><span class="tb-v">Pre-implementation</span></div>
+      <div class="tb-cell"><span class="tb-k">Revision</span><span class="tb-v">Draft B</span></div>
+      <div class="tb-cell"><span class="tb-k">Date</span><span class="tb-v">2026-09-05</span></div>
+      <div class="tb-cell"><span class="tb-k">Status</span><span class="tb-v">Decisions resolved</span></div>
       <div class="tb-cell"><span class="tb-k">Plates</span><span class="tb-v">8</span></div>
-      <div class="tb-cell"><span class="tb-k">Open decisions</span><span class="tb-v">4</span></div>
+      <div class="tb-cell"><span class="tb-k">Pilot scale</span><span class="tb-v">2–3 orgs</span></div>
     </div>
   </div>
 
@@ -228,7 +229,7 @@
       <div class="rail-h" style="margin-top:22px">Reference</div>
       <a href="#budget"><span class="num">§</span><span>Budgets</span></a>
       <a href="#failure"><span class="num">§</span><span>Failure matrix</span></a>
-      <a href="#decisions"><span class="num">§</span><span>Open decisions</span></a>
+      <a href="#decisions"><span class="num">§</span><span>Decisions — resolved</span></a>
     </nav>
 
     <main>
@@ -240,13 +241,13 @@
         <h2>System map — one event's whole journey</h2>
       </div>
       <p class="plate-sub">Two money boundaries define the architecture. Above the first, every
-        microsecond is billed to the customer. Below the second, every byte is billed to us. The
-        agent sits on their machine but in our process — which is precisely why it is the cheapest
-        place to do expensive work.</p>
+        microsecond is billed to the customer. Below the second, every byte is billed to us. In
+        v1 the agent is required, not optional — it sits on their machine but in our process,
+        which is precisely why it is the cheapest place to do expensive work.</p>
 
       <figure>
         <div class="fig-scroll">
-          <svg class="dg" viewBox="0 0 1000 800" role="img" aria-label="End-to-end system map: instrumented applications send telemetry through an optional node-local agent to the ingest edge, into a partitioned durable log, through three consumer pipelines into three stores, and out via a query API; a control plane returns sampling directives to the SDK.">
+          <svg class="dg" viewBox="0 0 1000 800" role="img" aria-label="End-to-end system map: instrumented applications send telemetry through a required host-local agent to the ingest edge, into the organization's own MongoDB database, through fold, correlate and alert processing running in-process, and out via a query API; a control plane returns sampling directives to the SDK.">
             <defs>
               <marker id="m1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk"/></marker>
               <marker id="m1h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk-h"/></marker>
@@ -271,13 +272,13 @@
 
             <!-- ZONE B -->
             <rect class="zone" x="20" y="176" width="720" height="92" rx="3"/>
-            <text class="zt" x="32" y="194">NODE-LOCAL · OUR PROCESS, THEIR MACHINE</text>
-            <rect class="box-infra v2" x="32" y="206" width="450" height="50" rx="4"/>
+            <text class="zt" x="32" y="194">HOST-LOCAL · OUR PROCESS, THEIR MACHINE · REQUIRED IN v1</text>
+            <rect class="box-infra" x="32" y="206" width="450" height="50" rx="4"/>
             <text class="ttl" x="257" y="227" text-anchor="middle">BugBuster Agent</text>
             <text class="sm" x="257" y="243" text-anchor="middle">cross-process fold · disk spool · one connection per node</text>
-            <text class="sm-f" x="500" y="222">direct mode</text>
-            <text class="sm-f" x="500" y="235">bypasses this</text>
-            <text class="sm-f" x="500" y="248">entirely →</text>
+            <text class="sm-f" x="500" y="222">browser/mobile</text>
+            <text class="sm-f" x="500" y="235">is the only path</text>
+            <text class="sm-f" x="500" y="248">that bypasses this →</text>
 
             <!-- arrows A -> B -->
             <path class="e-host" d="M143 136 V 206" marker-end="url(#m1h)"/>
@@ -300,8 +301,8 @@
 
             <path class="e" d="M380 380 V 406" marker-end="url(#m1)"/>
             <rect class="box-infra" x="32" y="406" width="696" height="54" rx="4"/>
-            <text class="ttl" x="380" y="428" text-anchor="middle">DURABLE LOG — Kafka / Redpanda</text>
-            <text class="sm" x="380" y="444" text-anchor="middle">partitioned by org_id · replayable · whales get their own topic</text>
+            <text class="ttl" x="380" y="428" text-anchor="middle">MONGODB — org resolved from the API key, before any tenant data is touched</text>
+            <text class="sm" x="380" y="444" text-anchor="middle">one database per org · no queue in v1 · stored exemplars are the replay substitute</text>
 
             <path class="e" d="M143 460 V 488" marker-end="url(#m1)"/>
             <path class="e" d="M380 460 V 488" marker-end="url(#m1)"/>
@@ -309,8 +310,8 @@
 
             <rect class="box-fold" x="32" y="488" width="222" height="58" rx="4"/>
             <text class="ttl" x="143" y="511" text-anchor="middle">Fold merger</text>
-            <text class="sm" x="143" y="527" text-anchor="middle">merge HLL + DDSketch</text>
-            <text class="sm-f" x="143" y="540" text-anchor="middle">across every pod</text>
+            <text class="sm" x="143" y="527" text-anchor="middle">exact count, exact top-K</text>
+            <text class="sm-f" x="143" y="540" text-anchor="middle">sketches are v2 (§4.2)</text>
             <rect class="box-infra" x="269" y="488" width="222" height="58" rx="4"/>
             <text class="ttl" x="380" y="511" text-anchor="middle">Correlator</text>
             <text class="sm" x="380" y="527" text-anchor="middle">release → commit → file:line</text>
@@ -319,23 +320,25 @@
             <text class="ttl" x="617" y="511" text-anchor="middle">Alert evaluator</text>
             <text class="sm" x="617" y="527" text-anchor="middle">new fingerprint · rate spike</text>
             <text class="sm-f" x="617" y="540" text-anchor="middle">drives sampling boost</text>
+            <text class="sm-f" x="733" y="505">in-process,</text>
+            <text class="sm-f" x="733" y="518">v1</text>
 
             <path class="e" d="M143 546 V 574" marker-end="url(#m1)"/>
             <path class="e" d="M380 546 V 574" marker-end="url(#m1)"/>
             <path class="e" d="M617 546 V 574" marker-end="url(#m1)"/>
 
             <rect class="box" x="32" y="574" width="222" height="58" rx="4"/>
-            <text class="ttl" x="143" y="597" text-anchor="middle">Postgres</text>
-            <text class="sm" x="143" y="613" text-anchor="middle">issues · fingerprints</text>
-            <text class="sm-f" x="143" y="626" text-anchor="middle">deploys · ownership</text>
+            <text class="ttl" x="143" y="597" text-anchor="middle">issues collection</text>
+            <text class="sm" x="143" y="613" text-anchor="middle">fingerprint · count · exemplars</text>
+            <text class="sm-f" x="143" y="626" text-anchor="middle">same org's MongoDB database</text>
             <rect class="box" x="269" y="574" width="222" height="58" rx="4"/>
-            <text class="ttl" x="380" y="597" text-anchor="middle">Columnar / TSDB</text>
-            <text class="sm" x="380" y="613" text-anchor="middle">time-bucketed aggregates</text>
-            <text class="sm-f" x="380" y="626" text-anchor="middle">serialized sketches</text>
+            <text class="ttl" x="380" y="597" text-anchor="middle">events collection</text>
+            <text class="sm" x="380" y="613" text-anchor="middle">exemplar payloads, ≤6/issue</text>
+            <text class="sm-f" x="380" y="626" text-anchor="middle">raw stream not persisted</text>
             <rect class="box" x="506" y="574" width="222" height="58" rx="4"/>
-            <text class="ttl" x="617" y="597" text-anchor="middle">Object store</text>
-            <text class="sm" x="617" y="613" text-anchor="middle">exemplars · raw envelopes</text>
-            <text class="sm-f" x="617" y="626" text-anchor="middle">cheap, cold, replayable</text>
+            <text class="ttl" x="617" y="597" text-anchor="middle">deploys collection</text>
+            <text class="sm" x="617" y="613" text-anchor="middle">releases · commit SHAs</text>
+            <text class="sm-f" x="617" y="626" text-anchor="middle">drives git correlation</text>
 
             <path class="e" d="M143 632 V 656" marker-end="url(#m1)"/>
             <path class="e" d="M380 632 V 656" marker-end="url(#m1)"/>
@@ -359,7 +362,7 @@
             <text class="ttl" x="875" y="346" text-anchor="middle">CONTROL PLANE</text>
             <text class="sm" x="784" y="368">· per-type sample rates</text>
             <text class="sm" x="784" y="384">· fingerprint suppression</text>
-            <text class="sm" x="784" y="400">· quota state per org</text>
+            <text class="sm" x="784" y="400">· quota state per org (v2)</text>
             <text class="sm" x="784" y="416">· config version</text>
             <text class="sm-f" x="784" y="438">the only component that</text>
             <text class="sm-f" x="784" y="450">talks back to the SDK</text>
@@ -626,20 +629,22 @@
         <span class="plate-num">04</span>
         <h2>Direct mode versus agent mode — what actually moves</h2>
       </div>
-      <p class="plate-sub">Same system, two wirings. The argument is not that the agent is faster;
-        it is that five entire categories of failure leave the customer's process. Compare the height
-        of the amber box on each side — that is the whole case.</p>
+      <p class="plate-sub">Same system, two wirings. Mode B is the required v1 path for every
+        backend-hosted SDK; Mode A survives only as the fallback for environments with no
+        host process to run an Agent on. The argument was never that the agent is faster — it's
+        that five entire categories of failure leave the customer's process. Compare the height
+        of the amber box on each side.</p>
 
       <figure>
         <div class="fig-scroll">
-          <svg class="dg" viewBox="0 0 1000 430" role="img" aria-label="Side by side comparison: in direct mode the host process contains capture, fold, serialize, compress, TLS, retry, circuit breaker and connection pool; in agent mode the host contains only capture, fold, serialize and a socket write, with the remaining five responsibilities relocated into the node-local agent.">
+          <svg class="dg" viewBox="0 0 1000 430" role="img" aria-label="Side by side comparison: in direct mode, the v1 fallback for browser, mobile and serverless, the host process contains capture, fold, serialize, compress, TLS, retry, circuit breaker and connection pool; in agent mode, required in v1 for backend SDKs, the host contains only capture, fold, serialize and a socket write, with the remaining five responsibilities relocated into the host-local agent.">
             <defs>
               <marker id="m4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk"/></marker>
               <marker id="m4h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk-h"/></marker>
             </defs>
 
-            <text class="zt" x="30" y="30">MODE A · DIRECT — DEFAULT, ZERO INFRASTRUCTURE</text>
-            <text class="zt" x="530" y="30">MODE B · AGENT — DEFERRED TO V2</text>
+            <text class="zt" x="30" y="30">MODE A · DIRECT — v1 FALLBACK (BROWSER · MOBILE · SERVERLESS)</text>
+            <text class="zt" x="530" y="30">MODE B · AGENT — REQUIRED IN v1 FOR BACKEND SDKS</text>
             <line class="rail-l" x1="500" y1="14" x2="500" y2="416" stroke-dasharray="3 4"/>
 
             <!-- A: host -->
@@ -677,8 +682,8 @@
             <path class="e-fold" d="M750 152 V 186" marker-end="url(#m4)"/>
             <text class="sm t-fold" x="758" y="173">UDS ~30µs · no TLS · file-permission auth</text>
 
-            <rect class="box-infra v2" x="530" y="186" width="440" height="130" rx="4"/>
-            <text class="ttl" x="544" y="208">BUGBUSTER AGENT — our process, their machine</text>
+            <rect class="box-infra" x="530" y="186" width="440" height="130" rx="4"/>
+            <text class="ttl" x="544" y="208">BUGBUSTER AGENT — our process, their machine · v1</text>
             <rect class="box-drop" x="544" y="220" width="196" height="24" rx="2"/><text class="lbl" x="554" y="237">compress + dictionary</text>
             <rect class="box-drop" x="544" y="250" width="196" height="24" rx="2"/><text class="lbl" x="554" y="267">TLS + certs</text>
             <rect class="box-drop" x="544" y="280" width="196" height="24" rx="2"/><text class="lbl" x="554" y="297">retry + breaker</text>
@@ -692,10 +697,11 @@
             <text class="sm t-fold" x="530" y="414">Agent sees the whole node, so the fold ratio improves by roughly the pod count.</text>
           </svg>
         </div>
-        <figcaption><b>The five red rows did not disappear — they relocated.</b> That is the entire
-          difference, and it is why the SDK must ship with a swappable transport boundary in v1 even
-          though the agent lands in v2: retrofitting the seam later means re-releasing every
-          customer's SDK.</figcaption>
+        <figcaption><b>The five red rows did not disappear — they relocated,</b> and in v1 they
+          relocate for every backend deployment, not just at scale. The SDK still ships with a
+          transport interface rather than a hardcoded HTTPS call — not to defer the agent, since
+          it's already here, but so Mode A (the browser/serverless fallback) and Mode B share one
+          capture/fold core instead of forking the SDK in two.</figcaption>
       </figure>
     </section>
 
@@ -980,22 +986,24 @@
     <section class="plate" id="p8">
       <div class="plate-head">
         <span class="plate-num">08</span>
-        <h2>Storage fan-out — and the replay that makes the algorithm improvable</h2>
+        <h2>Storage fan-out — the v2 growth path, once the log is triggered</h2>
       </div>
-      <p class="plate-sub">Three consumers read the same partitioned log independently. The replay
-        arrow is the reason the log exists: when the fingerprinting algorithm improves, history is
-        recomputed rather than abandoned.</p>
+      <p class="plate-sub">Not what v1 runs — v1 is plate 01's single write straight into the
+        org's MongoDB database, no queue. This is what gets added <em>if</em> one of §10's growth
+        triggers fires: write contention, a fingerprint-algorithm change needing full replay, or a
+        second independent consumer. The replay arrow is the reason a log would earn its cost:
+        when the fingerprinting algorithm improves, history is recomputed rather than abandoned.</p>
 
       <figure>
         <div class="fig-scroll">
-          <svg class="dg" viewBox="0 0 1000 470" role="img" aria-label="Four log partitions feed three independent consumer pipelines, which write to Postgres, a columnar store and an object store; a query API reads all three and serves the dashboard, AI debugger and alerts. A dashed replay arrow returns from the partitions to the consumers.">
+          <svg class="dg" viewBox="0 0 1000 470" role="img" aria-label="Target v2 architecture: four log partitions feed three independent consumer pipelines, which write to MongoDB issues, events and deploys collections; a query API reads all three and serves the dashboard, AI debugger and alerts. A dashed replay arrow returns from the partitions to the consumers.">
             <defs>
               <marker id="mA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk"/></marker>
               <marker id="mAi" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="mk-i"/></marker>
             </defs>
-            <text class="zt" x="36" y="30">DURABLE LOG</text>
+            <text class="zt" x="36" y="30">DURABLE LOG · v2</text>
             <text class="zt" x="272" y="30">CONSUMERS · INDEPENDENT OFFSETS</text>
-            <text class="zt" x="556" y="30">STORES</text>
+            <text class="zt" x="556" y="30">MONGODB COLLECTIONS</text>
             <text class="zt" x="810" y="30">SURFACE</text>
 
             <rect class="box-infra" x="36" y="46" width="176" height="32" rx="3"/>
@@ -1028,17 +1036,17 @@
             <path class="e" d="M212 176 H 272 " marker-end="url(#mA)"/>
 
             <rect class="box" x="556" y="46" width="212" height="70" rx="4"/>
-            <text class="ttl" x="570" y="68">Postgres</text>
-            <text class="sm" x="570" y="85">issues · fingerprints</text>
-            <text class="sm-f" x="570" y="100">the relational truth</text>
+            <text class="ttl" x="570" y="68">issues collection</text>
+            <text class="sm" x="570" y="85">fingerprints · sketches</text>
+            <text class="sm-f" x="570" y="100">HLL/DDSketch land here</text>
             <rect class="box" x="556" y="130" width="212" height="70" rx="4"/>
-            <text class="ttl" x="570" y="152">Columnar / TSDB</text>
+            <text class="ttl" x="570" y="152">events collection</text>
             <text class="sm" x="570" y="169">time-bucketed aggregates</text>
-            <text class="sm-f" x="570" y="184">sketches stored serialized</text>
+            <text class="sm-f" x="570" y="184">full stream, not just exemplars</text>
             <rect class="box" x="556" y="214" width="212" height="70" rx="4"/>
-            <text class="ttl" x="570" y="236">Object store</text>
-            <text class="sm" x="570" y="253">exemplars · raw envelopes</text>
-            <text class="sm-f" x="570" y="268">cold, cheap, replayable</text>
+            <text class="ttl" x="570" y="236">deploys collection</text>
+            <text class="sm" x="570" y="253">releases · commit SHAs</text>
+            <text class="sm-f" x="570" y="268">unchanged from v1</text>
 
             <path class="e" d="M484 81 H 556" marker-end="url(#mA)"/>
             <path class="e" d="M484 165 H 556" marker-end="url(#mA)"/>
@@ -1070,9 +1078,11 @@
             <text class="sm-f" x="140" y="416">Retention on the log is therefore a correctness decision, not a cost decision.</text>
           </svg>
         </div>
-        <figcaption><b>Every store here is derived; only the log is authoritative.</b> That inversion
-          is what makes the fingerprinting algorithm safe to iterate on — a design that writes
-          grouping decisions irreversibly into storage can never improve them.</figcaption>
+        <figcaption><b>Every store here is derived; only the log is authoritative</b> — once this
+          exists. In v1 there is no log, so the MongoDB collections themselves are the source of
+          truth, and replay is limited to re-fingerprinting the stored exemplars rather than the
+          full event stream (§8.4 of the ingest doc). That's the concrete capability this plate's
+          growth trigger buys back.</figcaption>
       </figure>
     </section>
 
@@ -1129,9 +1139,9 @@
           <tr><td>Host process forks</td><td><span class="pill p-crit">silent loss</span></td><td>total, silent</td><td><b>the dangerous one</b> — needs post-fork re-init</td></tr>
           <tr><td>SDK errors internally</td><td><span class="pill p-crit">crash risk</span></td><td>—</td><td>every entry point wrapped; recursion guard</td></tr>
           <tr><td>Agent down (mode B)</td><td><span class="pill p-v1">none</span></td><td>dropped at socket</td><td>non-blocking write; optional fallback to direct</td></tr>
-          <tr><td>One tenant floods ingest</td><td><span class="pill p-host">theirs only</span></td><td>their quota only</td><td>per-org partition + token bucket</td></tr>
-          <tr><td>Processing tier lags</td><td><span class="pill p-v1">none</span></td><td>dashboard goes stale</td><td>log buffers; consumers catch up</td></tr>
-          <tr><td>Fingerprint algorithm wrong</td><td><span class="pill p-v1">none</span></td><td>recoverable</td><td>replay from offset 0 under the new algorithm</td></tr>
+          <tr><td>One tenant floods ingest</td><td><span class="pill p-host">shared, not isolated yet</span></td><td>their own DB only (data)</td><td>database-per-org isolates data; load isolation (quota, partitioned log) is a v2 growth trigger, §10</td></tr>
+          <tr><td>Processing tier lags</td><td><span class="pill p-v1">none</span></td><td>dashboard goes stale</td><td>v1: fold/correlate run inline with the write, so there's no separate tier to lag yet; v2 log buffers once split out</td></tr>
+          <tr><td>Fingerprint algorithm wrong</td><td><span class="pill p-v1">none</span></td><td>partially recoverable</td><td>v1: re-fingerprint stored exemplars only · v2: full replay from offset 0 (plate 08)</td></tr>
         </tbody>
       </table>
     </div>
@@ -1145,21 +1155,44 @@
     </div>
 
     <!-- ══════════════════ DECISIONS ══════════════════ -->
-    <h3 id="decisions">Open decisions — these gate the build plan</h3>
+    <h3 id="decisions">Decisions — resolved</h3>
+    <p class="lbl" style="max-width:74ch;margin:0 0 18px" >
+      <span style="font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint)">Actual scale at time of writing</span>
+      <br>2–3 organizations, all pre-production, ~4 SDK installations total. That number is why
+      each resolution below reads the way it does.
+    </p>
     <div class="tbl-scroll">
       <table>
-        <thead><tr><th>#</th><th>Decision</th><th>Working default</th><th>What it changes</th></tr></thead>
+        <thead><tr><th>#</th><th>Decision</th><th>Resolution</th><th>Reasoning</th></tr></thead>
         <tbody>
-          <tr><td>01</td><td><b>SaaS or self-hosted first</b></td><td><span class="pill p-v2">SaaS-shaped</span></td><td>SaaS makes quotas, multi-tenancy and noisy-neighbour isolation day-one work; self-hosted defers most of plates 05–06</td></tr>
-          <tr><td>02</td><td><b>First SDK language</b></td><td><span class="pill p-v2">Node</span></td><td>Node's worker thread moves serialization and compression off the event loop cleanly; Python fights the GIL and fork-safety, which promotes the agent from optional to near-mandatory</td></tr>
-          <tr><td>03</td><td><b>Agent in v1 or v2</b></td><td><span class="pill p-v2">v2, seam in v1</span></td><td>The transport boundary must be swappable from the first release — retrofitting it means re-releasing every customer's SDK</td></tr>
-          <tr><td>04</td><td><b>Scale target for v1</b></td><td><span class="pill p-v2">format big, infra small</span></td><td>Design the wire format and the fold for the larger scale; build the infrastructure for the smaller one. Format is what you cannot change later</td></tr>
+          <tr><td>01</td><td><b>SaaS or self-hosted first</b></td><td><span class="pill p-v1">multi-tenant, day one</span></td><td>MongoDB, one database per org (plate 01). Real orgs exist today, so isolation can't be deferred the way quota/billing can — and at 2–3 orgs, database-per-org is structural isolation for free, not a cost.</td></tr>
+          <tr><td>02</td><td><b>First SDK language</b></td><td><span class="pill p-v1">Node</span></td><td>Worker threads move serialization, compression and fingerprinting off the event loop without fighting the GIL or fork-safety — the cleanest environment to prove the fold logic in first.</td></tr>
+          <tr><td>03</td><td><b>Agent in v1 or v2</b></td><td><span class="pill p-v1">v1 — required</span></td><td>Reopened from the original default. Every backend-hosted SDK talks to a host-local Agent over UDS (plate 04); direct/HTTPS survives only as the browser/mobile/serverless fallback.</td></tr>
+          <tr><td>04</td><td><b>Scale target for v1</b></td><td><span class="pill p-v1">schema big, infra small</span></td><td>Database-per-org isolation and the fold's field shape are built for growth now. Kafka, HLL/DDSketch, and quota enforcement are deferred — see growth triggers below — because infra topology is cheap to change later and schema is not.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Growth triggers — what brings each deferred piece back</h3>
+    <p class="lbl" style="max-width:78ch;margin:0 0 16px">Each trigger is a measurement, not a
+      date. Building ahead of the trigger was considered and rejected for each of these — a
+      single-broker Kafka gives no real durability gain over MongoDB directly, and HLL/DDSketch
+      are measurably <em>less</em> accurate than exact counts at pilot volume.</p>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>Deferred piece</th><th>Comes back when</th></tr></thead>
+        <tbody>
+          <tr><td>Durable log (plate 08)</td><td>The single Mongo-writing process shows measured write contention, a fingerprint-algorithm change needs full-history replay, or a second consumer needs the same event stream</td></tr>
+          <tr><td>HyperLogLog / DDSketch</td><td>Exact-count aggregation is measurably slow, or the fold table's raw-value memory is measurably large</td></tr>
+          <tr><td>Quota / rate limiting per org</td><td>One org's test traffic is measured to slow down another org sharing the VPS</td></tr>
+          <tr><td>Retiring database-per-org</td><td>Org count makes per-database connection management measurably unwieldy — dozens, not the current 2–3</td></tr>
+          <tr><td>Direct mode as a real backend option</td><td>A concrete deployment target can't run a host-local Agent for a reason other than "not built yet"</td></tr>
         </tbody>
       </table>
     </div>
 
     <div class="prose">
-      <p style="margin-top:22px">Everything above is drawn as a target, not a measurement. The first
+      <p style="margin-top:22px">Everything drawn is a target, not a measurement. The first
         real work is the benchmark harness from plate 02 — until the hot path is measured under load
         in a host application, <em>&ldquo;&lt; 5 µs&rdquo;</em> is an intention. The second is the
         fold table from plate 03, because its cardinality behaviour under a storm decides whether
@@ -1167,10 +1200,11 @@
     </div>
 
     <footer>
-      The BugBuster Blueprint · Draft A · 2026-08-25<br>
-      Companion documents: <b>docs/architecture/ingest-pipeline.md</b> (reasoning and invariants) ·
-      <b>docs/glossary.md</b> (terminology) · <b>doc.md</b> (vision and OpenTelemetry framing)<br>
-      Solid stroke = v1 scope · dashed stroke = deferred to v2 · amber = the host's process ·
+      The BugBuster Blueprint · Draft B · 2026-09-05 · decisions resolved (§ above)<br>
+      Companion documents: <b>docs/architecture/ingest-pipeline.md</b> (reasoning, invariants, §10
+      decision record) · <b>docs/glossary.md</b> (terminology) ·
+      <b>doc.md</b> (vision and OpenTelemetry framing)<br>
+      Solid stroke = v1 scope · dashed stroke = v2 growth path · amber = the host's process ·
       teal = the fold · red = a counted loss path
     </footer>
 

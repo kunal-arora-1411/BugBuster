@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BugBuster — Issues</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    max-width: 960px; margin: 0 auto; padding: 24px 16px;
+    background: Canvas; color: CanvasText;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: GrayText; font-size: 12px; margin: 0 0 20px; }
+  .config { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+  .config input { font: inherit; padding: 6px 8px; flex: 1; min-width: 180px; }
+  .config button { font: inherit; padding: 6px 14px; cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid GrayText; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: GrayText; }
+  tr.issue-row { cursor: pointer; }
+  tr.issue-row:hover { background: color-mix(in srgb, CanvasText 8%, transparent); }
+  .fidelity-exact { color: SeaGreen; }
+  .fidelity-sampled { color: DarkOrange; }
+  #detail {
+    margin-top: 20px; padding: 12px; border: 1px solid GrayText;
+    display: none; white-space: pre-wrap; font-size: 12px;
+  }
+  #status { color: GrayText; font-size: 12px; margin-top: 8px; }
+  #empty { color: GrayText; padding: 20px 0; display: none; }
+</style>
+</head>
+<body>
+  <h1>BugBuster</h1>
+  <p class="sub">Read-only issue viewer against the Query API — no settings, no auth flow, just "can I see my org's issues." See docs/api.md for what this calls.</p>
+
+  <div class="config">
+    <input id="backendUrl" placeholder="Backend URL (e.g. http://localhost:8080)" />
+    <input id="apiKey" placeholder="API key" type="password" />
+    <button id="loadBtn">Load issues</button>
+  </div>
+  <div id="status"></div>
+  <div id="empty">No issues yet.</div>
+
+  <table id="issuesTable" style="display:none">
+    <thead>
+      <tr><th>Fingerprint</th><th>Count</th><th>Users</th><th>Last seen</th><th>Fidelity</th></tr>
+    </thead>
+    <tbody id="issuesBody"></tbody>
+  </table>
+
+  <div id="detail"></div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  // Per-viewer convenience only — never shared, never read by anything but this browser.
+  $("backendUrl").value = localStorage.getItem("bb_backend_url") || "http://localhost:8080";
+  $("apiKey").value = localStorage.getItem("bb_api_key") || "";
+
+  async function loadIssues() {
+    const backendUrl = $("backendUrl").value.replace(/\/$/, "");
+    const apiKey = $("apiKey").value;
+    localStorage.setItem("bb_backend_url", backendUrl);
+    localStorage.setItem("bb_api_key", apiKey);
+
+    $("status").textContent = "Loading...";
+    $("detail").style.display = "none";
+    try {
+      const res = await fetch(backendUrl + "/issues", {
+        headers: { Authorization: "Bearer " + apiKey },
+      });
+      if (!res.ok) {
+        $("status").textContent = "Error: HTTP " + res.status + " (check backend URL and API key)";
+        $("issuesTable").style.display = "none";
+        $("empty").style.display = "none";
+        return;
+      }
+      const data = await res.json();
+      renderIssues(data.issues || []);
+      $("status").textContent = "Loaded " + (data.issues || []).length + " issue(s).";
+    } catch (err) {
+      $("status").textContent = "Request failed: " + err.message;
+    }
+  }
+
+  function renderIssues(issues) {
+    const body = $("issuesBody");
+    body.innerHTML = "";
+    if (issues.length === 0) {
+      $("issuesTable").style.display = "none";
+      $("empty").style.display = "block";
+      return;
+    }
+    $("empty").style.display = "none";
+    $("issuesTable").style.display = "table";
+
+    for (const issue of issues) {
+      const tr = document.createElement("tr");
+      tr.className = "issue-row";
+      const fidelityClass = issue.fidelity && issue.fidelity.isExact ? "fidelity-exact" : "fidelity-sampled";
+      const fidelityLabel = issue.fidelity && issue.fidelity.isExact
+        ? "exact"
+        : "~" + (issue.fidelity ? issue.fidelity.adjustedCount : "?") + "x weighted";
+      tr.innerHTML =
+        "<td>" + escapeHtml(issue.fingerprint) + "</td>" +
+        "<td>" + issue.count + "</td>" +
+        "<td>" + issue.usersAffected + "</td>" +
+        "<td>" + escapeHtml(issue.lastSeen) + "</td>" +
+        "<td class=\"" + fidelityClass + "\">" + fidelityLabel + "</td>";
+      tr.addEventListener("click", () => showDetail(issue));
+      body.appendChild(tr);
+    }
+  }
+
+  function showDetail(issue) {
+    const detail = $("detail");
+    detail.style.display = "block";
+    detail.textContent = JSON.stringify(issue, null, 2);
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  $("loadBtn").addEventListener("click", loadIssues);
+  if ($("apiKey").value) loadIssues();
+</script>
+</body>
+</html>

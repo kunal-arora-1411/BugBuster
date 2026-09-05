@@ -1,0 +1,8 @@
+{
+  "name": "@bugbuster/dashboard",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "node -e \"require('http').createServer((req,res)=>{require('fs').createReadStream('src/index.html').pipe(res)}).listen(5173,()=>console.log('dashboard: http://localhost:5173'))\""
+  }
+}

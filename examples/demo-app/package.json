@@ -1,0 +1,28 @@
+{
+  "name": "@bugbuster/demo-app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "typecheck": "tsc -b",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "pnpm run test:integration",
+    "test:integration": "vitest run test"
+  },
+  "dependencies": {
+    "@bugbuster/sdk-node": "workspace:*",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@bugbuster/agent": "workspace:*",
+    "@bugbuster/backend": "workspace:*",
+    "@types/express": "^5.0.0",
+    "mongodb-memory-server": "^10.1.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

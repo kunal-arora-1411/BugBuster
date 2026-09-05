@@ -1,8 +1,12 @@
 # BugBuster — Ingest Pipeline Architecture
 
-> **Status:** Design discussion (pre-implementation). Captures the reasoning behind the
-> collection path: SDK → Agent → Ingest Edge → Durable Log.
-> **Open decisions** are listed in §10 and must be resolved before the build plan.
+> **Status:** Design resolved for v1 (§10). Captures the reasoning behind the collection path:
+> SDK → Agent → Ingest Edge → MongoDB. Pre-implementation — no code written yet.
+>
+> **v1 scope, in one line:** multi-tenant from day one (MongoDB, one database per org) ·
+> Node SDK · a required host-local Agent (UDS in, HTTPS out) · single VPS · no Kafka, no
+> probabilistic sketches yet. See §10 for the full decision record and the triggers that grow
+> each deferred piece back in.
 >
 > **Companion docs:**
 > - `../glossary.md` — plain-English explanation of every term used below
@@ -70,24 +74,26 @@ batching) is the worst behaviour for our API. The resolution:
 │  L1  worker        fingerprint → FOLD → serialize → compress       │
 │                         ↓                                          │
 └─────────────────────────┼──────────────────────────────────────────┘
-                          │  UDS (µs, no TLS)  ──── or ── direct HTTPS
+                          │  UDS (µs, no TLS) — same host, required in v1
                           ▼
-┌──────────────────── L2  AGENT (node-local) ────────────────────────┐
+┌──────────────────── L2  AGENT (host-local, v1) ─────────────────────┐
 │  cross-process fold · disk spool · 1 connection · dictionary zstd   │
 └─────────────────────────┼──────────────────────────────────────────┘
                           │  HTTPS, keep-alive, backpressure-aware
                           ▼
-┌──────────────────── L3  INGEST EDGE (our money) ───────────────────┐
-│   auth · quota · size · priority · APPEND ONLY → 202   p99 < 15ms  │
+┌──────────────────── L3  INGEST EDGE (our VPS) ──────────────────────┐
+│   auth · quota (org_id) · size · priority · APPEND → 202  p99<15ms │
 │   never parses the body                                            │
 └─────────────────────────┼──────────────────────────────────────────┘
                           ▼
-                  L4  durable log (Kafka/Redpanda, partition by org)
+                  L4  MongoDB — one database per org (§8.4)
                           ▼
-                  L5  processing (fold, correlate, store)
+                  L5  processing (fold, correlate) · in-process for now
 ```
 
-The two load-bearing ideas: **L1's fold** and **L3 never parsing the body.**
+The two load-bearing ideas: **L1's fold** and **L3 never parsing the body.** The Agent hop (L2)
+is mandatory for every backend-hosted SDK in v1 — direct-to-HTTPS is kept only as the fallback
+for environments where a host-local Agent can't run (browser, serverless); see §6.3.
 
 ---
 
@@ -190,13 +196,20 @@ was bought for.
 **~40 KB instead of 250 MB — four orders of magnitude**, losing almost nothing that matters:
 full stacks retained, counts exact, percentiles accurate.
 
-### 4.2 Sketch choices (committed)
+### 4.2 Sketch choices (target design — v2, see §10)
 
 | Need | Structure | Why |
 |---|---|---|
 | Cardinality (users/sessions affected) | **HyperLogLog++**, sparse repr | Mergeable across all 40 pods server-side, so "6,921 affected users" is a real deduplicated number — not a sum of overlapping guesses |
 | Distributions (latency) | **DDSketch** (over t-digest) | *Relative* error guarantee — the correct primitive for p99 SLO work — and merges cleanly |
 | Attribute values (endpoints, tenants, browsers) | **Space-Saving top-K** + explicit `other` bucket | Never store unbounded value sets |
+
+**v1 reality:** at pilot volume (a handful of orgs, pre-prod traffic) these sketches would add
+*more* error than they remove — HLL and DDSketch approximate best at high cardinality, and are
+measurably worse than an exact count at low N (glossary §8 explains why). v1 stores **exact**
+`count`, an exact affected-user count, and an exact top-K, computed directly. The document shape
+below keeps the *field names* stable so swapping in a real sketch later is a value-type change,
+not a schema migration — see the growth trigger in §10.
 
 ### 4.3 Why this is defensible as original work
 
@@ -263,22 +276,35 @@ Retrofitting this is nearly impossible. It is a **schema decision made now.**
 
 ---
 
-## 6. L2 — The Agent: how host cost approaches zero
+## 6. L2 — The Agent: a required host-local process in v1
 
-### 6.1 Direct-mode math at 200 pods
+**Resolved (§10): the Agent ships in v1, not v2.** Every backend-hosted SDK talks to a host-local
+Agent over UDS; the Agent is the only thing that makes the network hop to the VPS. This section
+originally scoped the Agent as a v2 upgrade justified purely by scale — that reasoning is kept
+below because it still explains *why* the split is good architecture, but the actual v1 decision
+was made independent of hitting that scale: see §10 for the reasoning (mainly: keep the SDK thin
+and the transport concerns off the customer's process from day one, rather than migrate to it
+under pressure later).
+
+### 6.1 Direct-mode math at 200 pods (the scale argument, kept for context)
 
 200 TLS handshakes · 200 connection pools · 200 independent retry timers · **200 disjoint fold
 windows** — so the fold ratio is 200× worse, because each pod only sees its own slice of the
-storm.
+storm. At v1's actual scale (a handful of hosts, one or two SDK-instrumented services per host)
+this specific math doesn't bite yet — the win right now is architectural cleanliness (§6.2), not
+fold ratio. It becomes a measured win the moment any one host runs more than one instrumented
+service, because those services fold together through the shared local Agent before the network
+hop.
 
-### 6.2 With a node-local agent
+### 6.2 With a host-local agent
 
 The SDK's entire job collapses to: **serialize, write to a Unix domain socket, forget.**
 
 No TLS, no compression, no retries, no disk, no circuit breaker — **none of it in their
 process.** The agent owns all of it, plus:
 
-- **Cross-process folding** — dramatically better ratios, because it sees the whole node
+- **Cross-process folding** — dramatically better ratios once a host runs more than one
+  instrumented service, because the Agent sees the whole node
 - **One persistent connection per node**
 - **Disk spool** — it is our process, so disk is fair game
 
@@ -286,9 +312,12 @@ process.** The agent owns all of it, plus:
 
 The SDK **must work in both modes**, auto-detecting the agent by probing the socket path.
 
-- **Direct mode** = default (zero infra, easy adoption)
-- **Agent mode** = the upgrade
-- **Serverless** = direct mode only, or a Lambda-extension equivalent
+- **Agent mode** = required in v1 for every backend-hosted deployment
+- **Direct mode** = the fallback for environments where a host-local Agent cannot run —
+  browser and mobile SDKs, and serverless functions (see below) — kept in the SDK as an escape
+  hatch, not offered as the default path for backend services
+- **Serverless** = direct mode only, or a Lambda-extension equivalent, since there is no
+  long-lived host process for an Agent to run on
 
 ### 6.4 Compression: be clever, it's cheap
 
@@ -375,20 +404,55 @@ everything.
 - **Quota** as a Redis token bucket with a local pre-check.
 - **Target p99 < 15ms**, fully stateless, horizontally scalable.
 
-### 8.4 L4 — The durable log
+### 8.4 L4 — Storage: MongoDB, one database per organization
 
-**Kafka / Redpanda, partitioned by `org_id`.** Buys three things:
+**Resolved (§10): MongoDB, not Postgres; no Kafka/Redpanda durable log in v1.** The ingest edge
+writes directly into the org's own database — no queue in between. This is a deliberate
+simplification, not an oversight: a distributed log exists to buy per-tenant isolation, buffering
+under load, and replay, and at pilot scale (a few orgs, pre-prod traffic) none of those problems
+are live yet. See §10's growth triggers for exactly what condition brings the log back.
 
-1. **Per-tenant isolation** — one customer's storm is one partition's problem
-2. **Buffering** — processing can lag without dropping
+**Tenant isolation, done structurally instead of by convention:**
+
+```text
+bugbuster_control        ← shared: org metadata, API key → {org_id, db_name}
+bugbuster_org_<name>     ← one database per org: events, issues, deploys
+bugbuster_org_<name>     ← a second org, fully separate database
+...
+```
+
+The ingest edge resolves the API key to a database name *before* touching any tenant data, then
+opens that connection for the rest of the request. There is no shared collection with an `org_id`
+filter to forget in some future query — the isolation is enforced by which database a connection
+even has a handle to, not by remembering to add a `WHERE org_id = ?` (or Mongo-equivalent
+`{org_id: ...}`) everywhere. This is the practical reason it beats a shared-collection model at
+this org count: a missed tenant filter is a real, common class of SaaS data leak, and this removes
+the class entirely rather than relying on discipline.
+
+This does not scale indefinitely — dozens-to-hundreds of orgs make per-database connection
+management unwieldy, at which point the shared-collection-plus-`org_id`-filter model (with the
+now-necessary discipline enforced by tests) is the natural next step. That migration is deferred
+until the org count actually demands it (§10).
+
+**What the durable log would still buy, once it comes back (kept for the record):**
+
+1. **Per-tenant isolation of write *load*** (not data — the database split already isolates data)
+   — one customer's storm becomes one partition's problem instead of contending for the shared
+   ingest process
+2. **Buffering** — processing can lag behind ingest without dropping
 3. **Replay** — when the fingerprinting algorithm improves, **recompute history** instead of
-   living with the old grouping forever
-
-Whale tenants get their own topic and consumer group.
+   living with the old grouping forever. In v1, the raw exemplar payloads stored per-issue serve
+   as a *partial* substitute — enough to re-fingerprint stored exemplars, though not to replay
+   every raw event, since only exemplars (not the full stream) are persisted.
 
 ---
 
 ## 9. Does the math work?
+
+This is the target-scale math the wire format and the fold are designed against — **not**
+current load. Actual v1 traffic (a handful of pilot orgs, pre-prod) is far below this table; the
+point of computing it here is to confirm the *design* holds before it's needed, per §10's
+"schema built big, infrastructure built small" rule.
 
 Mid-size customer: **500 req/s, 1% error rate → 432k errors/day.**
 
@@ -400,37 +464,77 @@ Mid-size customer: **500 req/s, 1% error rate → 432k errors/day.**
 
 That is the gap between *"unit economics work"* and *"we are an S3 bill with a dashboard."*
 
-> Which is why **the fold is not an optimization to add later — it is the architecture.**
+> Which is why **the fold is not an optimization to add later — it is the architecture** — even
+> though v1's actual database has nowhere near this much data flowing through it yet.
 
 ---
 
-## 10. Open decisions (blocking the build plan)
+## 10. Decisions — resolved
 
-| # | Decision | Why it changes the plan |
-|---|---|---|
-| **1** | **SaaS or self-hosted first?** | SaaS makes multi-tenancy, quotas, and noisy-neighbor isolation day-one concerns. Self-hosted lets us skip most of §7–8 initially and move much faster. The vision doc reads SaaS-ish; the proposed repo layout reads self-hostable. |
-| **2** | **First SDK language?** | Decides the concurrency model. **Node** gives a worker thread → serialization + compression move fully off the event loop (cleanest story). **Python** fights the GIL and fork-safety → makes the **agent nearly mandatory** rather than optional. Different shapes of hard. |
-| **3** | **Agent in v1 or v2?** | v1: better architecture, harder adoption. v2: the SDK's transport boundary must be designed for swapping *now*, and we accept a fatter SDK meanwhile. |
-| **4** | **Scale target for the v1 design?** | "Ten of my own services" and "a hundred paying customers" are genuinely different systems. Designing for the second up front is a real cost; retrofitting it is a bigger one. |
+Actual scale at time of writing: **2–3 organizations, all pre-production, ~4 SDK installations
+total.** The four decisions below were originally left open; each is now resolved, informed by
+that number.
 
-### Working default (if no other input)
+| # | Decision | Resolution | Reasoning |
+|---|---|---|---|
+| **1** | SaaS or self-hosted first? | **Multi-tenant from day one** — MongoDB, one database per org (§8.4) | Real, separate organizations exist today, and cross-org data leakage is a correctness requirement, not a future concern — isolation cannot be deferred the way quota/billing infrastructure can. Solved structurally (separate databases) rather than by convention (a shared collection plus a filter someone could forget), because at 2–3 orgs the structural version is *free* — it costs nothing extra to run three small databases instead of one. |
+| **2** | First SDK language? | **Node** | Worker threads move serialization/compression/fingerprinting fully off the event loop without fighting the GIL or fork-safety — the cleanest environment to validate the fold logic in before porting to a harder language. |
+| **3** | Agent in v1 or v2? | **v1 — required for every backend-hosted SDK** | Reopened from the original default (which deferred it). The Agent keeps the SDK to "write to a socket, forget" from the first release, rather than shipping a fatter direct-mode SDK now and migrating transport logic under pressure later. UDS is the SDK↔Agent hop (same host); HTTPS is the Agent↔VPS hop (§6, §4 in the glossary). |
+| **4** | Scale target for v1? | **Schema and isolation designed for growth; infrastructure sized for today** | Concretely: `org_id`-equivalent isolation (database-per-org) is real now; Kafka, HyperLogLog/DDSketch, and quota enforcement are all deferred — see growth triggers below. This is the one-way-door test from §4.4/§5.2 applied consistently: schema and protocol shape are expensive to change later, so they're built for the bigger number; infra topology is cheap to change later, so it's built for the number that's actually true today. |
 
-> **SaaS-shaped · Node SDK first · agent designed-for but shipped in v2 · wire format built for
-> scale, infrastructure built small.**
+### What v1 actually is, concretely
 
-Rationale for #4 specifically: **design the wire format and the fold for the larger scale;
-build the infrastructure for the smaller one.** Format is the thing you cannot change later;
-infrastructure is the thing you can.
+```text
+~4 SDK installs (Node)         Each host: App+SDK ──UDS──▶ Agent ──HTTPS──▶
+                                                                              │
+                                                                              ▼
+                                                                    One VPS, one Node process
+                                                                    (ingest edge + processing,
+                                                                     not yet split into services)
+                                                                              │
+                                                                              ▼
+                                                        MongoDB — one database per org
+                                                                              │
+                                                                              ▼
+                                                              Query API → Dashboard
+```
+
+No Kafka. No sketches. No quota enforcement. No per-service split of fold/correlate/alert (§1 of
+plate 08 in the blueprint) — those run in-process for now. What **is** built correctly from the
+start: per-org database isolation, the `adjusted_count` field (§5.2), the fingerprint/fold
+document shape (§4.2), and the SDK's `Transport` interface seam (so Agent-vs-direct is a
+implementation swap, not a rewrite).
+
+### Growth triggers — what brings each deferred piece back, and why it isn't a date
+
+Each trigger is a **measurement**, not a calendar entry. Building ahead of the trigger was
+evaluated and rejected — see the conversation history / commit context for the specific reasoning
+(single-broker Kafka provides no real durability gain; sketches are *less* accurate than exact
+counts at pilot volume; each is a cost paid for a benefit that doesn't exist yet at this scale).
+
+| Deferred piece | Comes back when |
+|---|---|
+| Durable log (Kafka/Redpanda) | The single Mongo-writing process shows measured write contention, a fingerprinting-algorithm change needs full-history replay (not just stored exemplars), or a second independent consumer needs the same event stream |
+| HyperLogLog / DDSketch | Exact-count aggregation queries are measurably slow, or the fold table's raw-value memory footprint is measurably large |
+| Quota / rate limiting per org | One org's test traffic is measured to cause a slowdown for another org sharing the VPS |
+| Shared-collection multi-tenancy (retiring database-per-org) | The org count makes per-database connection management measurably unwieldy — likely dozens, not the current 2–3 |
+| Direct mode promoted to a real supported path for backend SDKs (today it's a fallback) | A concrete backend deployment target can't run a host-local Agent for a reason other than "we haven't built the installer yet" |
 
 ---
 
-## 11. Next deep-dive (pick one before writing the plan)
+## 11. Next deep-dive (pick one before writing the build plan)
+
+With §10 resolved, the next layer down is one of:
 
 1. **Fold / fingerprint mechanics** — the thing that makes this project *original*:
    normalization rules, coarsening strategy, exemplar selection policy, cross-version stability.
-2. **Storage & query layer** — the thing that decides what the dashboard can actually *ask*:
-   schema for folded records + sketches, time partitioning, cardinality budget, and
-   PostgreSQL's real limits here.
+2. **MongoDB schema & query layer** — the thing that decides what the dashboard can actually
+   *ask*: the exact `events` / `issues` / `deploys` document shapes per org database, which
+   fields are indexed, how the fold's `findOneAndUpdate` upserts are structured, and where the
+   exact-count fields (§4.2) will later swap for sketches without a shape change.
+3. **The Agent itself** — its own lifecycle now that it's in v1 scope: how it's deployed
+   alongside the SDK on a host, its own crash/restart behavior, and the UDS handshake / socket
+   discovery the SDK uses to find it (§6.3).
 
 ---
 
@@ -473,6 +577,6 @@ EDGE
 | **Fingerprint** | Stable hash identifying "the same bug" — computed client-side in BugBuster |
 | **adjusted_count** | The sampling weight; multiplier that recovers the true population count |
 | **Fidelity** | How much of the true signal actually survived capture, sampling, and shedding |
-| **Direct mode** | SDK talks straight to the ingest API (no agent) |
-| **Agent mode** | SDK talks to a node-local agent over a Unix domain socket |
+| **Direct mode** | SDK talks straight to the ingest API over HTTPS, no Agent — the v1 fallback for browser/mobile/serverless, not the default for backend services |
+| **Agent mode** | SDK talks to a host-local Agent over a Unix domain socket, which then talks HTTPS to the VPS — **required in v1** for every backend-hosted SDK (§6) |
 | **Coarsening** | Deliberately weakening the fingerprint (stripping frames) to cap cardinality |

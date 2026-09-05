@@ -1,0 +1,9 @@
+# Hand-formatted prose — prettier's markdown/HTML reflow fights deliberate line-wrapping here.
+*.md
+*.html
+doc.md
+
+pnpm-lock.yaml
+dist/
+coverage/
+node_modules/

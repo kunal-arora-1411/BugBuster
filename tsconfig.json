@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/types" },
+    { "path": "packages/sdk-node" },
+    { "path": "packages/agent" },
+    { "path": "packages/backend" }
+  ]
+}

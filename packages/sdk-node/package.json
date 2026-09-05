@@ -1,0 +1,26 @@
+{
+  "name": "@bugbuster/sdk-node",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "typecheck": "tsc -b",
+    "test": "pnpm run test:unit",
+    "test:unit": "vitest run test/unit",
+    "bench": "vitest bench test/bench --run"
+  },
+  "dependencies": {
+    "@bugbuster/types": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
