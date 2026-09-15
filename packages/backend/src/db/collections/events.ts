@@ -25,7 +25,9 @@ export async function getExemplarsByIds(
   eventIds: readonly string[],
 ): Promise<BugBusterEvent[]> {
   if (eventIds.length === 0) return [];
+  // Exclude Mongo's own `_id` — the public contract is exactly the `BugBusterEvent` wire shape,
+  // same discipline as `toPublicIssue` keeping the internal `IssueDocument` out of the Query API.
   return eventsCollection(db)
-    .find({ eventId: { $in: [...eventIds] } })
+    .find({ eventId: { $in: [...eventIds] } }, { projection: { _id: 0 } })
     .toArray();
 }

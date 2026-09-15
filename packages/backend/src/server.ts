@@ -11,11 +11,14 @@ import type { ControlDb } from "./db/control.js";
 import { TenantDbResolver } from "./db/tenant.js";
 import { extractBearerToken, resolveOrgForRequest } from "./ingest/edge.js";
 import { processEnvelope } from "./ingest/processor.js";
-import { getIssue, listIssues } from "./db/collections/issues.js";
+import { decodeIssuesCursor, getIssue, listIssues } from "./db/collections/issues.js";
+import { getExemplarsByIds } from "./db/collections/events.js";
 import { attachFidelity } from "./query/fidelity.js";
 import { computeDirectives } from "./directives.js";
 
 const CONFIG_VERSION = 1;
+const DEFAULT_ISSUES_LIMIT = 50;
+const MAX_ISSUES_LIMIT = 200;
 
 /**
  * The one place every route resolves auth (ingest-pipeline.md §8.4): if this returns undefined,
@@ -91,14 +94,32 @@ export function buildServer(config: BackendConfig, controlDb: ControlDb): Fastif
     await reply.code(202).send();
   });
 
-  app.get("/issues", async (request, reply) => {
-    const org = await requireOrg(request, reply, controlDb);
-    if (!org) return;
+  app.get<{ Querystring: { limit?: string; cursor?: string } }>(
+    "/issues",
+    async (request, reply) => {
+      const org = await requireOrg(request, reply, controlDb);
+      if (!org) return;
 
-    const db = await tenants.forOrgDb(org.dbName);
-    const issues = await listIssues(db);
-    await reply.send({ issues: issues.map(attachFidelity) });
-  });
+      const requestedLimit = Number(request.query.limit);
+      const limit =
+        Number.isInteger(requestedLimit) && requestedLimit > 0
+          ? Math.min(requestedLimit, MAX_ISSUES_LIMIT)
+          : DEFAULT_ISSUES_LIMIT;
+
+      let cursor;
+      if (request.query.cursor) {
+        cursor = decodeIssuesCursor(request.query.cursor);
+        if (!cursor) {
+          await reply.code(400).send({ error: "invalid cursor" });
+          return;
+        }
+      }
+
+      const db = await tenants.forOrgDb(org.dbName);
+      const page = await listIssues(db, { limit, cursor });
+      await reply.send({ issues: page.issues.map(attachFidelity), nextCursor: page.nextCursor });
+    },
+  );
 
   app.get<{ Params: { fingerprint: string } }>("/issues/:fingerprint", async (request, reply) => {
     const org = await requireOrg(request, reply, controlDb);
@@ -112,6 +133,36 @@ export function buildServer(config: BackendConfig, controlDb: ControlDb): Fastif
     }
     await reply.send(attachFidelity(issue));
   });
+
+  // Resolves the exemplarRefs -> full BugBusterEvent bodies gap (docs/api.md's "Not yet built"):
+  // the aggregate route intentionally never inlines full event payloads (they can be large, and
+  // most issue views never need them), so viewing one is a deliberate second request.
+  app.get<{ Params: { fingerprint: string } }>(
+    "/issues/:fingerprint/exemplars",
+    async (request, reply) => {
+      const org = await requireOrg(request, reply, controlDb);
+      if (!org) return;
+
+      const db = await tenants.forOrgDb(org.dbName);
+      const issue = await getIssue(db, request.params.fingerprint);
+      if (!issue) {
+        await reply.code(404).send({ error: "not found" });
+        return;
+      }
+
+      const events = await getExemplarsByIds(
+        db,
+        issue.exemplarRefs.map((ref) => ref.eventId),
+      );
+      const eventById = new Map(events.map((event) => [event.eventId, event]));
+      // Ordered per the issue's own exemplarRefs (its documented selection-policy order), not
+      // Mongo's $in return order, which is unspecified.
+      const exemplars = issue.exemplarRefs
+        .map((ref) => eventById.get(ref.eventId))
+        .filter((event) => event !== undefined);
+      await reply.send({ exemplars });
+    },
+  );
 
   return app;
 }

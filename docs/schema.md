@@ -83,6 +83,9 @@ Insertion is idempotent (`$setOnInsert` + upsert on `eventId`) — a retried sen
 the exemplar. Capped at ≤6 per fingerprint, enforced by `issues.ts`'s `addExemplarRef`, not by a
 Mongo-level constraint (capped collections don't support a per-key limit).
 
+Resolvable over the Query API via [`GET /issues/:fingerprint/exemplars`](api.md), which reads this
+collection through `getExemplarsByIds`.
+
 ## `deploys` collection
 
 ```text

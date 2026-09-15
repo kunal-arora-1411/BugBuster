@@ -37,7 +37,7 @@ function issuesCollection(db: Db): Collection<IssueDocument> {
 
 export async function ensureIssuesIndexes(db: Db): Promise<void> {
   await issuesCollection(db).createIndex({ fingerprint: 1 }, { unique: true });
-  await issuesCollection(db).createIndex({ lastSeen: -1 });
+  await issuesCollection(db).createIndex({ lastSeen: -1, fingerprint: -1 });
 }
 
 // Mongo field names historically disallowed literal dots; endpoint paths commonly contain
@@ -159,9 +159,64 @@ function toPublicIssue(doc: IssueDocument): Issue {
   };
 }
 
-export async function listIssues(db: Db, limit = 50): Promise<Issue[]> {
-  const docs = await issuesCollection(db).find({}).sort({ lastSeen: -1 }).limit(limit).toArray();
-  return docs.map(toPublicIssue);
+export interface IssuesCursor {
+  lastSeen: string;
+  fingerprint: string;
+}
+
+export interface IssuesPage {
+  issues: Issue[];
+  nextCursor?: string;
+}
+
+// Opaque to callers by design (docs/api.md): base64 is just an encoding, not an attempt at
+// tamper-resistance — a forged cursor only ever resends a differently-scoped page of the same
+// caller's own org data, never another org's, since org scoping happens before this is reached.
+export function encodeIssuesCursor(cursor: IssuesCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+export function decodeIssuesCursor(raw: string): IssuesCursor | undefined {
+  try {
+    const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+    if (typeof parsed?.lastSeen === "string" && typeof parsed?.fingerprint === "string") {
+      return { lastSeen: parsed.lastSeen, fingerprint: parsed.fingerprint };
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `lastSeen` alone isn't a stable sort key — two issues can share a timestamp — so the cursor
+ * pins `(lastSeen, fingerprint)` together and pages strictly "further down that same order,"
+ * rather than risking a skipped or repeated row across pages at equal timestamps.
+ */
+export async function listIssues(db: Db, opts: { limit?: number; cursor?: IssuesCursor } = {}): Promise<IssuesPage> {
+  const limit = opts.limit ?? 50;
+  const filter = opts.cursor
+    ? {
+        $or: [
+          { lastSeen: { $lt: opts.cursor.lastSeen } },
+          { lastSeen: opts.cursor.lastSeen, fingerprint: { $lt: opts.cursor.fingerprint } },
+        ],
+      }
+    : {};
+
+  const docs = await issuesCollection(db)
+    .find(filter)
+    .sort({ lastSeen: -1, fingerprint: -1 })
+    .limit(limit + 1)
+    .toArray();
+
+  const hasMore = docs.length > limit;
+  const page = hasMore ? docs.slice(0, limit) : docs;
+  const last = page[page.length - 1];
+  return {
+    issues: page.map(toPublicIssue),
+    nextCursor: hasMore && last ? encodeIssuesCursor({ lastSeen: last.lastSeen, fingerprint: last.fingerprint }) : undefined,
+  };
 }
 
 export async function getIssue(db: Db, fingerprint: string): Promise<Issue | undefined> {

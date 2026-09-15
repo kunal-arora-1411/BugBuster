@@ -24,15 +24,21 @@
   .fidelity-sampled { color: DarkOrange; }
   #detail {
     margin-top: 20px; padding: 12px; border: 1px solid GrayText;
-    display: none; white-space: pre-wrap; font-size: 12px;
+    display: none; font-size: 12px;
   }
+  #detail h2 { font-size: 13px; margin: 0 0 8px; }
+  #detail pre { white-space: pre-wrap; word-break: break-word; margin: 0 0 16px; }
+  .exemplar { border-top: 1px solid GrayText; padding-top: 10px; margin-top: 10px; }
+  .exemplar:first-of-type { border-top: none; margin-top: 0; }
+  .exemplar-meta { color: GrayText; font-size: 11px; margin: 0 0 4px; }
+  #loadMoreBtn { font: inherit; padding: 6px 14px; cursor: pointer; margin-top: 12px; display: none; }
   #status { color: GrayText; font-size: 12px; margin-top: 8px; }
   #empty { color: GrayText; padding: 20px 0; display: none; }
 </style>
 </head>
 <body>
   <h1>BugBuster</h1>
-  <p class="sub">Read-only issue viewer against the Query API — no settings, no auth flow, just "can I see my org's issues." See docs/api.md for what this calls.</p>
+  <p class="sub">Read-only issue viewer against the Query API — no settings, no auth flow, just "can I see my org's issues, and one of them in full." See docs/api.md for what this calls.</p>
 
   <div class="config">
     <input id="backendUrl" placeholder="Backend URL (e.g. http://localhost:8080)" />
@@ -48,6 +54,7 @@
     </thead>
     <tbody id="issuesBody"></tbody>
   </table>
+  <button id="loadMoreBtn">Load more</button>
 
   <div id="detail"></div>
 
@@ -58,7 +65,9 @@
   $("backendUrl").value = localStorage.getItem("bb_backend_url") || "http://localhost:8080";
   $("apiKey").value = localStorage.getItem("bb_api_key") || "";
 
-  async function loadIssues() {
+  let nextCursor = undefined;
+
+  async function loadIssues(append) {
     const backendUrl = $("backendUrl").value.replace(/\/$/, "");
     const apiKey = $("apiKey").value;
     localStorage.setItem("bb_backend_url", backendUrl);
@@ -67,27 +76,32 @@
     $("status").textContent = "Loading...";
     $("detail").style.display = "none";
     try {
-      const res = await fetch(backendUrl + "/issues", {
+      const url = backendUrl + "/issues" + (append && nextCursor ? "?cursor=" + encodeURIComponent(nextCursor) : "");
+      const res = await fetch(url, {
         headers: { Authorization: "Bearer " + apiKey },
       });
       if (!res.ok) {
         $("status").textContent = "Error: HTTP " + res.status + " (check backend URL and API key)";
         $("issuesTable").style.display = "none";
         $("empty").style.display = "none";
+        $("loadMoreBtn").style.display = "none";
         return;
       }
       const data = await res.json();
-      renderIssues(data.issues || []);
-      $("status").textContent = "Loaded " + (data.issues || []).length + " issue(s).";
+      nextCursor = data.nextCursor;
+      renderIssues(data.issues || [], append);
+      $("loadMoreBtn").style.display = nextCursor ? "inline-block" : "none";
+      const countSoFar = $("issuesBody").children.length;
+      $("status").textContent = "Loaded " + countSoFar + " issue(s)" + (nextCursor ? " (more available)." : ".");
     } catch (err) {
       $("status").textContent = "Request failed: " + err.message;
     }
   }
 
-  function renderIssues(issues) {
+  function renderIssues(issues, append) {
     const body = $("issuesBody");
-    body.innerHTML = "";
-    if (issues.length === 0) {
+    if (!append) body.innerHTML = "";
+    if (!append && issues.length === 0) {
       $("issuesTable").style.display = "none";
       $("empty").style.display = "block";
       return;
@@ -113,10 +127,51 @@
     }
   }
 
-  function showDetail(issue) {
+  async function showDetail(issue) {
+    const backendUrl = $("backendUrl").value.replace(/\/$/, "");
+    const apiKey = $("apiKey").value;
     const detail = $("detail");
     detail.style.display = "block";
-    detail.textContent = JSON.stringify(issue, null, 2);
+    detail.innerHTML =
+      "<h2>" + escapeHtml(issue.fingerprint) + "</h2><pre>" + escapeHtml(JSON.stringify(issue, null, 2)) + "</pre>" +
+      "<h2>Exemplars</h2><div id=\"exemplars\">Loading...</div>";
+
+    try {
+      const res = await fetch(backendUrl + "/issues/" + encodeURIComponent(issue.fingerprint) + "/exemplars", {
+        headers: { Authorization: "Bearer " + apiKey },
+      });
+      if (!res.ok) {
+        $("exemplars").textContent = "Error loading exemplars: HTTP " + res.status;
+        return;
+      }
+      const data = await res.json();
+      renderExemplars(data.exemplars || []);
+    } catch (err) {
+      $("exemplars").textContent = "Request failed: " + err.message;
+    }
+  }
+
+  function renderExemplars(exemplars) {
+    const container = $("exemplars");
+    if (exemplars.length === 0) {
+      container.textContent = "No exemplars recorded for this issue yet.";
+      return;
+    }
+    container.innerHTML = "";
+    for (const ev of exemplars) {
+      const div = document.createElement("div");
+      div.className = "exemplar";
+      const source = ev.source ? ev.source.file + ":" + ev.source.line + " (" + ev.source.function + ")" : "";
+      const message = ev.error ? ev.error.message : "(no message)";
+      const stacktrace = ev.error ? ev.error.stacktrace : "";
+      div.innerHTML =
+        "<p class=\"exemplar-meta\">" +
+        escapeHtml(ev.exemplarRole) + " · " + escapeHtml(ev.timestamp) + " · trace " + escapeHtml(ev.trace ? ev.trace.traceId : "?") +
+        "</p>" +
+        "<p class=\"exemplar-meta\">" + escapeHtml(source) + "</p>" +
+        "<pre>" + escapeHtml(message) + (stacktrace ? "\n\n" + escapeHtml(stacktrace) : "") + "</pre>";
+      container.appendChild(div);
+    }
   }
 
   function escapeHtml(s) {
@@ -125,8 +180,9 @@
     }[c]));
   }
 
-  $("loadBtn").addEventListener("click", loadIssues);
-  if ($("apiKey").value) loadIssues();
+  $("loadBtn").addEventListener("click", () => loadIssues(false));
+  $("loadMoreBtn").addEventListener("click", () => loadIssues(true));
+  if ($("apiKey").value) loadIssues(false);
 </script>
 </body>
 </html>
