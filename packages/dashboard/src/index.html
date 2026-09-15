@@ -50,7 +50,7 @@
 
   <table id="issuesTable" style="display:none">
     <thead>
-      <tr><th>Fingerprint</th><th>Count</th><th>Users</th><th>Last seen</th><th>Fidelity</th></tr>
+      <tr><th>Fingerprint</th><th>Count</th><th>Users</th><th>Last seen (IST)</th><th>Fidelity</th></tr>
     </thead>
     <tbody id="issuesBody"></tbody>
   </table>
@@ -120,7 +120,7 @@
         "<td>" + escapeHtml(issue.fingerprint) + "</td>" +
         "<td>" + issue.count + "</td>" +
         "<td>" + issue.usersAffected + "</td>" +
-        "<td>" + escapeHtml(issue.lastSeen) + "</td>" +
+        "<td>" + escapeHtml(formatIST(issue.lastSeen)) + "</td>" +
         "<td class=\"" + fidelityClass + "\">" + fidelityLabel + "</td>";
       tr.addEventListener("click", () => showDetail(issue));
       body.appendChild(tr);
@@ -166,12 +166,27 @@
       const stacktrace = ev.error ? ev.error.stacktrace : "";
       div.innerHTML =
         "<p class=\"exemplar-meta\">" +
-        escapeHtml(ev.exemplarRole) + " · " + escapeHtml(ev.timestamp) + " · trace " + escapeHtml(ev.trace ? ev.trace.traceId : "?") +
+        escapeHtml(ev.exemplarRole) + " · " + escapeHtml(formatIST(ev.timestamp)) + " · trace " + escapeHtml(ev.trace ? ev.trace.traceId : "?") +
         "</p>" +
         "<p class=\"exemplar-meta\">" + escapeHtml(source) + "</p>" +
         "<pre>" + escapeHtml(message) + (stacktrace ? "\n\n" + escapeHtml(stacktrace) : "") + "</pre>";
       container.appendChild(div);
     }
+  }
+
+  // Backend timestamps are always ISO UTC (docs/schema.md); the dashboard displays them in IST
+  // (UTC+5:30, no DST) since that's this org's own timezone — the wire format itself stays UTC.
+  function formatIST(isoString) {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return isoString;
+    const istMs = d.getTime() + (5 * 60 + 30) * 60 * 1000;
+    const ist = new Date(istMs);
+    const pad = (n) => String(n).padStart(2, "0");
+    return (
+      ist.getUTCFullYear() + "-" + pad(ist.getUTCMonth() + 1) + "-" + pad(ist.getUTCDate()) +
+      " " + pad(ist.getUTCHours()) + ":" + pad(ist.getUTCMinutes()) + ":" + pad(ist.getUTCSeconds()) +
+      " IST"
+    );
   }
 
   function escapeHtml(s) {
