@@ -23,8 +23,21 @@ export interface UdsTransportOptions {
   socketPath: string;
 }
 
+/**
+ * KNOWN v1 GAP, Windows-specific: named pipes aren't regular filesystem entries `existsSync` can
+ * see, so any `\\.\pipe\...`-shaped path is unconditionally reported available — there is no
+ * synchronous way to actually probe a Windows pipe (a real check needs an async connect attempt,
+ * and `init()` is deliberately synchronous). Two consequences: (1) `init()` always picks
+ * UdsTransport on Windows once a pipe-shaped path is configured, even if nothing is listening yet
+ * at startup; (2) if a Windows Agent that WAS running crashes mid-process, this function still
+ * reports it available on every subsequent flush — the SDK keeps selecting UdsTransport, whose
+ * sends then fail and get silently dropped (§3.4/§7.2's "never throw out of the flush loop"),
+ * rather than ever falling back to HttpTransport. On POSIX this function is a correct, real check
+ * (UDS paths genuinely are filesystem entries). Fixing the Windows case for real needs either an
+ * async re-probe on a failure streak or making transport selection re-evaluated per-flush instead
+ * of once at init() — not built speculatively here; flagged instead.
+ */
 export function isAgentSocketAvailable(socketPath: string): boolean {
-  // Windows named pipes aren't regular filesystem entries `existsSync` can see; POSIX sockets are.
   if (socketPath.startsWith("\\\\.\\pipe\\")) return true;
   return existsSync(socketPath);
 }
