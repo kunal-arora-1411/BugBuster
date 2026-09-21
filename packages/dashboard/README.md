@@ -1,9 +1,10 @@
 # @bugbuster/dashboard
 
-A minimal, read-only issue viewer against the Query API (`docs/api.md`). Deliberately small — no
-auth flow, no settings, no build step — matching this project's own "build for validated need"
-principle (see `docs/architecture/ingest-pipeline.md` §10). If richer dashboard UX is ever
-justified, it earns that complexity with real usage, not speculatively now.
+A read-only issue viewer against the Query API (`docs/api.md`). Still no auth flow, no settings,
+no build step, no framework — matching this project's own "build for validated need" principle
+(see `docs/architecture/ingest-pipeline.md` §10) — but the single HTML file now carries real
+day-to-day triage UX rather than a bare table + JSON dump, since that's a need real usage of this
+dashboard already validated.
 
 ## Running it
 
@@ -18,13 +19,20 @@ build step. Either way, enter the backend URL and an API key (stored only in tha
 
 ## What it does
 
-- `GET /issues` on load and on demand, rendered as a table.
-- Click a row to see the full issue JSON, including `fidelity` — whether `count` is exact or a
-  sampled/weighted estimate (Appendix A's FIDELITY invariant: never present a sampled count as
-  unconditional truth).
+- `GET /issues` on load and "Load more" (cursor-paginated), rendered as a sortable table — click
+  any column header to sort the currently-loaded issues by it.
+- A filter bar: free-text search over fingerprint/release, and a fidelity filter (all / exact only
+  / sampled only), plus a stats strip (issues loaded, total occurrences, how many are
+  sampled/degraded).
+- Click a row for a structured detail view: overview (count, users affected, adjusted count,
+  first/last seen, releases), duration percentiles, a top-endpoints bar chart, and — via
+  `GET /issues/:fingerprint/exemplars` — full exemplar cards (role, trace id, source location,
+  error message, and a copyable stack trace). The full issue JSON is still available in a
+  collapsible "Raw JSON" section for anyone who wants it.
+- `fidelity` is always shown as a badge — whether `count` is exact or a sampled/weighted estimate
+  (Appendix A's FIDELITY invariant: never present a sampled count as unconditional truth).
 
 ## What it deliberately doesn't do
 
-No pagination UI, no exemplar detail view (the Query API only returns `exemplarRefs`, not resolved
-payloads, yet — see `docs/api.md`), no live updates, no multi-org switcher. All reasonable next
-additions once someone is actually using this daily and asking for them.
+No live updates (polling/websockets), no multi-org switcher, no write/management actions. All
+reasonable next additions once someone is using this daily and asking for them specifically.

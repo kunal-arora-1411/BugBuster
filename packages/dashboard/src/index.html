@@ -2,70 +2,239 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BugBuster — Issues</title>
 <style>
-  :root { color-scheme: light dark; }
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --bg-elevated: #ffffff;
+    --border: #e2e4e9;
+    --text: #16181d;
+    --text-muted: #6b7280;
+    --text-faint: #9aa0ab;
+    --accent: #3b5bfd;
+    --accent-weak: #eef1ff;
+    --success: #0f9d58;
+    --success-weak: #e6f7ee;
+    --warning: #c2760a;
+    --warning-weak: #fdf3e3;
+    --danger: #d33b3b;
+    --row-hover: #f0f2f6;
+    --radius: 10px;
+    --radius-sm: 6px;
+    --shadow: 0 1px 2px rgba(16,20,30,0.04), 0 4px 16px rgba(16,20,30,0.03);
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --bg-elevated: #171a21;
+      --border: #262a33;
+      --text: #e7e9ee;
+      --text-muted: #9aa1ad;
+      --text-faint: #6b7280;
+      --accent: #7b93ff;
+      --accent-weak: #1c2340;
+      --success: #4ade80;
+      --success-weak: #10281c;
+      --warning: #f3b95f;
+      --warning-weak: #332405;
+      --danger: #f47171;
+      --row-hover: #1d212b;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 4px 20px rgba(0,0,0,0.25);
+    }
+  }
+  * { box-sizing: border-box; }
   body {
-    font-family: ui-monospace, "SF Mono", Consolas, monospace;
-    max-width: 960px; margin: 0 auto; padding: 24px 16px;
-    background: Canvas; color: CanvasText;
+    font-family: var(--sans);
+    max-width: 1080px; margin: 0 auto; padding: 28px 20px 80px;
+    background: var(--bg); color: var(--text);
+    font-size: 14px; line-height: 1.5;
   }
-  h1 { font-size: 18px; margin: 0 0 4px; }
-  .sub { color: GrayText; font-size: 12px; margin: 0 0 20px; }
-  .config { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
-  .config input { font: inherit; padding: 6px 8px; flex: 1; min-width: 180px; }
-  .config button { font: inherit; padding: 6px 14px; cursor: pointer; }
+  h1 { font-size: 20px; margin: 0 0 2px; letter-spacing: -0.01em; }
+  .sub { color: var(--text-muted); font-size: 12.5px; margin: 0 0 20px; max-width: 680px; }
+  code, .mono { font-family: var(--mono); }
+
+  .panel {
+    background: var(--bg-elevated); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+  }
+
+  .toolbar { padding: 14px; margin-bottom: 14px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .toolbar input, .toolbar select {
+    font: inherit; font-size: 13px; padding: 8px 10px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg); color: var(--text);
+  }
+  .toolbar input::placeholder { color: var(--text-faint); }
+  #backendUrl { flex: 1 1 220px; min-width: 160px; }
+  #apiKey { flex: 1 1 180px; min-width: 140px; }
+  .toolbar .spacer { flex-basis: 100%; height: 0; }
+  .toolbar .filters { display: flex; gap: 8px; flex: 1 1 auto; }
+  #search { flex: 1 1 200px; }
+
+  button {
+    font: inherit; font-size: 13px; font-weight: 500; padding: 8px 14px;
+    cursor: pointer; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg-elevated); color: var(--text);
+  }
+  button:hover { background: var(--row-hover); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { filter: brightness(1.06); }
+  button.ghost { border-color: transparent; background: transparent; padding: 4px 8px; font-size: 12px; color: var(--text-muted); }
+  button.ghost:hover { background: var(--row-hover); color: var(--text); }
+
+  #status { color: var(--text-muted); font-size: 12.5px; margin: 2px 2px 14px; min-height: 16px; }
+  #status.err { color: var(--danger); }
+
+  .stats { display: flex; gap: 10px; margin-bottom: 14px; }
+  .stat { flex: 1; padding: 12px 14px; }
+  .stat .n { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+  .stat .l { font-size: 11.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
+  .stat.warn .n { color: var(--warning); }
+
+  #empty { color: var(--text-muted); padding: 48px 0; text-align: center; display: none; }
+
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid GrayText; }
-  th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: GrayText; }
-  tr.issue-row { cursor: pointer; }
-  tr.issue-row:hover { background: color-mix(in srgb, CanvasText 8%, transparent); }
-  .fidelity-exact { color: SeaGreen; }
-  .fidelity-sampled { color: DarkOrange; }
-  #detail {
-    margin-top: 20px; padding: 12px; border: 1px solid GrayText;
-    display: none; font-size: 12px;
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  th {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);
+    cursor: pointer; user-select: none; white-space: nowrap; position: sticky; top: 0; background: var(--bg-elevated);
   }
-  #detail h2 { font-size: 13px; margin: 0 0 8px; }
-  #detail pre { white-space: pre-wrap; word-break: break-word; margin: 0 0 16px; }
-  .exemplar { border-top: 1px solid GrayText; padding-top: 10px; margin-top: 10px; }
-  .exemplar:first-of-type { border-top: none; margin-top: 0; }
-  .exemplar-meta { color: GrayText; font-size: 11px; margin: 0 0 4px; }
-  #loadMoreBtn { font: inherit; padding: 6px 14px; cursor: pointer; margin-top: 12px; display: none; }
-  #status { color: GrayText; font-size: 12px; margin-top: 8px; }
-  #empty { color: GrayText; padding: 20px 0; display: none; }
+  th:hover { color: var(--text); }
+  th .arrow { opacity: 0.4; margin-left: 3px; }
+  th.active .arrow { opacity: 1; color: var(--accent); }
+  tr.issue-row { cursor: pointer; }
+  tr.issue-row:hover { background: var(--row-hover); }
+  tr.issue-row.selected { background: var(--accent-weak); }
+  td.fp { font-family: var(--mono); font-size: 12.5px; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px;
+    border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap;
+  }
+  .badge-exact { background: var(--success-weak); color: var(--success); }
+  .badge-sampled { background: var(--warning-weak); color: var(--warning); }
+  .chip {
+    display: inline-block; padding: 2px 7px; margin: 1px 3px 1px 0; border-radius: 5px;
+    font-size: 11px; background: var(--bg); border: 1px solid var(--border); color: var(--text-muted);
+  }
+
+  #loadMoreBtn { display: none; margin: 14px auto 0; }
+  .center { text-align: center; }
+
+  #detail { margin-top: 18px; display: none; }
+  #detail .dhead {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 14px; border-bottom: 1px solid var(--border);
+  }
+  #detail .dhead .fp { font-size: 14px; font-weight: 600; word-break: break-all; }
+  .section { padding: 14px; border-bottom: 1px solid var(--border); }
+  .section:last-child { border-bottom: none; }
+  .section h3 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);
+    margin: 0 0 10px;
+  }
+  .kv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+  .kv-grid .k { font-size: 11px; color: var(--text-muted); margin-bottom: 2px; }
+  .kv-grid .v { font-size: 13.5px; font-weight: 500; }
+  .pct-row { display: flex; gap: 10px; }
+  .pct-box { flex: 1; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); text-align: center; }
+  .pct-box .n { font-size: 16px; font-weight: 600; }
+  .pct-box .l { font-size: 10.5px; color: var(--text-muted); margin-top: 2px; }
+  .ep-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12.5px; }
+  .ep-name { flex: 0 0 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; }
+  .ep-bar-track { flex: 1; height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; }
+  .ep-bar-fill { height: 100%; background: var(--accent); }
+  .ep-count { flex: 0 0 42px; text-align: right; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+  .exemplar { padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 10px; background: var(--bg); }
+  .exemplar:last-child { margin-bottom: 0; }
+  .exemplar-top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+  .role-badge {
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+    padding: 2px 7px; border-radius: 5px; background: var(--accent-weak); color: var(--accent);
+  }
+  .exemplar-meta { color: var(--text-muted); font-size: 11.5px; }
+  .exemplar-source { font-family: var(--mono); font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+  .exemplar-message { font-size: 13px; margin-bottom: 6px; white-space: pre-wrap; word-break: break-word; }
+  .stack-wrap { position: relative; }
+  .stack-wrap pre {
+    background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 10px 12px; font-size: 11.5px; overflow-x: auto; margin: 0; white-space: pre;
+    max-height: 260px; overflow-y: auto;
+  }
+  .copy-btn { position: absolute; top: 6px; right: 6px; }
+  details.raw { font-size: 12px; }
+  details.raw summary { cursor: pointer; color: var(--text-muted); padding: 4px 0; }
+  details.raw pre {
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 10px 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; font-size: 11.5px;
+  }
+  .empty-note { color: var(--text-faint); font-size: 12.5px; font-style: italic; }
 </style>
 </head>
 <body>
   <h1>BugBuster</h1>
   <p class="sub">Read-only issue viewer against the Query API — no settings, no auth flow, just "can I see my org's issues, and one of them in full." See docs/api.md for what this calls.</p>
 
-  <div class="config">
+  <div class="panel toolbar">
     <input id="backendUrl" placeholder="Backend URL (e.g. http://localhost:8080)" />
     <input id="apiKey" placeholder="API key" type="password" />
-    <button id="loadBtn">Load issues</button>
+    <button id="loadBtn" class="primary">Load issues</button>
+    <div class="spacer"></div>
+    <div class="filters">
+      <input id="search" placeholder="Filter by fingerprint or release…" />
+      <select id="fidelityFilter">
+        <option value="all">All fidelity</option>
+        <option value="exact">Exact only</option>
+        <option value="sampled">Sampled only</option>
+      </select>
+    </div>
   </div>
   <div id="status"></div>
-  <div id="empty">No issues yet.</div>
 
-  <table id="issuesTable" style="display:none">
-    <thead>
-      <tr><th>Fingerprint</th><th>Count</th><th>Users</th><th>Last seen (IST)</th><th>Fidelity</th></tr>
-    </thead>
-    <tbody id="issuesBody"></tbody>
-  </table>
-  <button id="loadMoreBtn">Load more</button>
+  <div class="stats" id="stats" style="display:none">
+    <div class="panel stat"><div class="n" id="statTotal">0</div><div class="l">Issues loaded</div></div>
+    <div class="panel stat"><div class="n" id="statOccurrences">0</div><div class="l">Total occurrences</div></div>
+    <div class="panel stat warn"><div class="n" id="statSampled">0</div><div class="l">Sampled / degraded</div></div>
+  </div>
 
-  <div id="detail"></div>
+  <div id="empty" class="panel">No issues yet.</div>
+
+  <div class="panel" style="overflow:auto">
+    <table id="issuesTable" style="display:none">
+      <thead>
+        <tr>
+          <th data-key="fingerprint">Fingerprint <span class="arrow">▾</span></th>
+          <th data-key="count">Count <span class="arrow">▾</span></th>
+          <th data-key="usersAffected">Users <span class="arrow">▾</span></th>
+          <th data-key="releases">Releases <span class="arrow">▾</span></th>
+          <th data-key="lastSeen" class="active">Last seen (IST) <span class="arrow">▾</span></th>
+          <th data-key="fidelity">Fidelity <span class="arrow">▾</span></th>
+        </tr>
+      </thead>
+      <tbody id="issuesBody"></tbody>
+    </table>
+  </div>
+  <div class="center"><button id="loadMoreBtn">Load more</button></div>
+
+  <div id="detail" class="panel"></div>
 
 <script>
   const $ = (id) => document.getElementById(id);
 
   // Per-viewer convenience only — never shared, never read by anything but this browser.
-  $("backendUrl").value = localStorage.getItem("bb_backend_url") || "http://localhost:8080";
+  $("backendUrl").value = localStorage.getItem("bb_backend_url") || "https://backend-kunal-arora-1411s-projects.vercel.app";
   $("apiKey").value = localStorage.getItem("bb_api_key") || "";
 
   let nextCursor = undefined;
+  let allIssues = [];          // every issue loaded so far, across pages
+  let sortKey = "lastSeen";
+  let sortDir = "desc";
+  let selectedFingerprint = null;
 
   async function loadIssues(append) {
     const backendUrl = $("backendUrl").value.replace(/\/$/, "");
@@ -73,104 +242,256 @@
     localStorage.setItem("bb_backend_url", backendUrl);
     localStorage.setItem("bb_api_key", apiKey);
 
-    $("status").textContent = "Loading...";
-    $("detail").style.display = "none";
+    setStatus("Loading…");
     try {
       const url = backendUrl + "/issues" + (append && nextCursor ? "?cursor=" + encodeURIComponent(nextCursor) : "");
-      const res = await fetch(url, {
-        headers: { Authorization: "Bearer " + apiKey },
-      });
+      const res = await fetch(url, { headers: { Authorization: "Bearer " + apiKey } });
       if (!res.ok) {
-        $("status").textContent = "Error: HTTP " + res.status + " (check backend URL and API key)";
+        setStatus("Error: HTTP " + res.status + " (check backend URL and API key)", true);
         $("issuesTable").style.display = "none";
+        $("stats").style.display = "none";
         $("empty").style.display = "none";
         $("loadMoreBtn").style.display = "none";
         return;
       }
       const data = await res.json();
       nextCursor = data.nextCursor;
-      renderIssues(data.issues || [], append);
+      const issues = data.issues || [];
+      allIssues = append ? allIssues.concat(issues) : issues;
+      if (!append) { $("detail").style.display = "none"; selectedFingerprint = null; }
+      renderAll();
       $("loadMoreBtn").style.display = nextCursor ? "inline-block" : "none";
-      const countSoFar = $("issuesBody").children.length;
-      $("status").textContent = "Loaded " + countSoFar + " issue(s)" + (nextCursor ? " (more available)." : ".");
+      setStatus("Loaded " + allIssues.length + " issue(s)" + (nextCursor ? " (more available)." : "."));
     } catch (err) {
-      $("status").textContent = "Request failed: " + err.message;
+      setStatus("Request failed: " + err.message, true);
     }
   }
 
-  function renderIssues(issues, append) {
+  function setStatus(text, isError) {
+    $("status").textContent = text;
+    $("status").className = isError ? "err" : "";
+  }
+
+  function matchesFilter(issue) {
+    const q = $("search").value.trim().toLowerCase();
+    if (q) {
+      const inFingerprint = issue.fingerprint.toLowerCase().includes(q);
+      const inReleases = (issue.releases || []).some(r => r.toLowerCase().includes(q));
+      if (!inFingerprint && !inReleases) return false;
+    }
+    const fFilter = $("fidelityFilter").value;
+    const isExact = issue.fidelity ? issue.fidelity.isExact : issue.adjustedCount === 1;
+    if (fFilter === "exact" && !isExact) return false;
+    if (fFilter === "sampled" && isExact) return false;
+    return true;
+  }
+
+  function sortValue(issue, key) {
+    if (key === "fidelity") return issue.fidelity && issue.fidelity.isExact ? 1 : 0;
+    if (key === "releases") return (issue.releases || []).join(",");
+    return issue[key];
+  }
+
+  function renderAll() {
+    const filtered = allIssues.filter(matchesFilter);
+    const sorted = filtered.slice().sort((a, b) => {
+      const av = sortValue(a, sortKey), bv = sortValue(b, sortKey);
+      let cmp;
+      if (typeof av === "string" && typeof bv === "string") cmp = av.localeCompare(bv);
+      else cmp = (av > bv) - (av < bv);
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    renderStats(filtered);
+    renderTable(sorted);
+    document.querySelectorAll("#issuesTable th").forEach(th => {
+      th.classList.toggle("active", th.dataset.key === sortKey);
+      th.querySelector(".arrow").textContent = th.dataset.key === sortKey ? (sortDir === "asc" ? "▴" : "▾") : "▾";
+    });
+  }
+
+  function renderStats(list) {
+    if (allIssues.length === 0) { $("stats").style.display = "none"; return; }
+    $("stats").style.display = "flex";
+    $("statTotal").textContent = list.length;
+    $("statOccurrences").textContent = list.reduce((sum, i) => sum + (i.count || 0), 0);
+    $("statSampled").textContent = list.filter(i => !(i.fidelity ? i.fidelity.isExact : i.adjustedCount === 1)).length;
+  }
+
+  function renderTable(list) {
     const body = $("issuesBody");
-    if (!append) body.innerHTML = "";
-    if (!append && issues.length === 0) {
+    body.innerHTML = "";
+    if (allIssues.length === 0) {
       $("issuesTable").style.display = "none";
       $("empty").style.display = "block";
+      $("empty").textContent = "No issues yet.";
+      return;
+    }
+    if (list.length === 0) {
+      $("issuesTable").style.display = "none";
+      $("empty").style.display = "block";
+      $("empty").textContent = "No issues match this filter.";
       return;
     }
     $("empty").style.display = "none";
     $("issuesTable").style.display = "table";
 
-    for (const issue of issues) {
+    for (const issue of list) {
       const tr = document.createElement("tr");
-      tr.className = "issue-row";
-      const fidelityClass = issue.fidelity && issue.fidelity.isExact ? "fidelity-exact" : "fidelity-sampled";
-      const fidelityLabel = issue.fidelity && issue.fidelity.isExact
-        ? "exact"
-        : "~" + (issue.fidelity ? issue.fidelity.adjustedCount : "?") + "x weighted";
+      tr.className = "issue-row" + (issue.fingerprint === selectedFingerprint ? " selected" : "");
+      const isExact = issue.fidelity ? issue.fidelity.isExact : issue.adjustedCount === 1;
+      const fidelityClass = isExact ? "badge-exact" : "badge-sampled";
+      const fidelityLabel = isExact ? "exact" : "~" + (issue.fidelity ? issue.fidelity.adjustedCount : issue.adjustedCount) + "x weighted";
+      const releaseChips = (issue.releases || []).slice(0, 3).map(r => `<span class="chip">${escapeHtml(r)}</span>`).join("") || '<span class="empty-note">—</span>';
       tr.innerHTML =
-        "<td>" + escapeHtml(issue.fingerprint) + "</td>" +
-        "<td>" + issue.count + "</td>" +
-        "<td>" + issue.usersAffected + "</td>" +
-        "<td>" + escapeHtml(formatIST(issue.lastSeen)) + "</td>" +
-        "<td class=\"" + fidelityClass + "\">" + fidelityLabel + "</td>";
+        `<td class="fp">${escapeHtml(issue.fingerprint)}</td>` +
+        `<td class="num">${issue.count}</td>` +
+        `<td class="num">${issue.usersAffected}</td>` +
+        `<td>${releaseChips}</td>` +
+        `<td>${escapeHtml(formatIST(issue.lastSeen))}</td>` +
+        `<td><span class="badge ${fidelityClass}">${fidelityLabel}</span></td>`;
       tr.addEventListener("click", () => showDetail(issue));
       body.appendChild(tr);
     }
   }
 
+  function pct(sorted, list) { return list.length ? Math.round((sorted / list.length) * 100) : 0; }
+
   async function showDetail(issue) {
+    selectedFingerprint = issue.fingerprint;
+    renderAll(); // to highlight the selected row
     const backendUrl = $("backendUrl").value.replace(/\/$/, "");
     const apiKey = $("apiKey").value;
     const detail = $("detail");
     detail.style.display = "block";
-    detail.innerHTML =
-      "<h2>" + escapeHtml(issue.fingerprint) + "</h2><pre>" + escapeHtml(JSON.stringify(issue, null, 2)) + "</pre>" +
-      "<h2>Exemplars</h2><div id=\"exemplars\">Loading...</div>";
+
+    const isExact = issue.fidelity ? issue.fidelity.isExact : issue.adjustedCount === 1;
+    const fidelityClass = isExact ? "badge-exact" : "badge-sampled";
+    const fidelityLabel = isExact ? "exact" : "~" + (issue.fidelity ? issue.fidelity.adjustedCount : issue.adjustedCount) + "x weighted";
+    const releaseChips = (issue.releases || []).map(r => `<span class="chip">${escapeHtml(r)}</span>`).join("") || '<span class="empty-note">none recorded</span>';
+
+    const d = issue.duration || { p50: 0, p95: 0, p99: 0 };
+    const top = (issue.topEndpoints && issue.topEndpoints.top) || [];
+    const other = (issue.topEndpoints && issue.topEndpoints.other) || 0;
+    const maxEp = Math.max(1, ...top.map(e => e.count), other);
+
+    detail.innerHTML = `
+      <div class="dhead">
+        <div class="fp mono">${escapeHtml(issue.fingerprint)}</div>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <span class="badge ${fidelityClass}">${fidelityLabel}</span>
+          <button class="ghost" id="closeDetailBtn">Close ✕</button>
+        </div>
+      </div>
+      <div class="section">
+        <h3>Overview</h3>
+        <div class="kv-grid">
+          <div><div class="k">Count</div><div class="v">${issue.count}</div></div>
+          <div><div class="k">Users affected</div><div class="v">${issue.usersAffected}</div></div>
+          <div><div class="k">Adjusted count</div><div class="v">${issue.adjustedCount}</div></div>
+          <div><div class="k">First seen</div><div class="v">${escapeHtml(formatIST(issue.firstSeen))}</div></div>
+          <div><div class="k">Last seen</div><div class="v">${escapeHtml(formatIST(issue.lastSeen))}</div></div>
+          <div><div class="k">Releases</div><div class="v">${releaseChips}</div></div>
+        </div>
+      </div>
+      <div class="section">
+        <h3>Duration percentiles (ms)</h3>
+        <div class="pct-row">
+          <div class="pct-box"><div class="n">${d.p50}</div><div class="l">p50</div></div>
+          <div class="pct-box"><div class="n">${d.p95}</div><div class="l">p95</div></div>
+          <div class="pct-box"><div class="n">${d.p99}</div><div class="l">p99</div></div>
+        </div>
+      </div>
+      <div class="section">
+        <h3>Top endpoints</h3>
+        ${top.length === 0 && other === 0
+          ? '<span class="empty-note">No endpoint data recorded.</span>'
+          : top.map(e => `
+              <div class="ep-row">
+                <span class="ep-name" title="${escapeHtml(e.endpoint)}">${escapeHtml(e.endpoint)}</span>
+                <span class="ep-bar-track"><span class="ep-bar-fill" style="width:${pct(e.count, [{count:maxEp}])}%"></span></span>
+                <span class="ep-count">${e.count}</span>
+              </div>`).join("") +
+            (other > 0 ? `
+              <div class="ep-row">
+                <span class="ep-name">other</span>
+                <span class="ep-bar-track"><span class="ep-bar-fill" style="width:${pct(other, [{count:maxEp}])}%"></span></span>
+                <span class="ep-count">${other}</span>
+              </div>` : "")}
+      </div>
+      <div class="section">
+        <h3>Exemplars</h3>
+        <div id="exemplars">Loading…</div>
+      </div>
+      <div class="section">
+        <details class="raw">
+          <summary>Raw JSON</summary>
+          <pre>${escapeHtml(JSON.stringify(issue, null, 2))}</pre>
+        </details>
+      </div>
+    `;
+    $("closeDetailBtn").addEventListener("click", () => {
+      detail.style.display = "none";
+      selectedFingerprint = null;
+      renderAll();
+    });
 
     try {
       const res = await fetch(backendUrl + "/issues/" + encodeURIComponent(issue.fingerprint) + "/exemplars", {
         headers: { Authorization: "Bearer " + apiKey },
       });
       if (!res.ok) {
-        $("exemplars").textContent = "Error loading exemplars: HTTP " + res.status;
+        $("exemplars").innerHTML = `<span class="empty-note">Error loading exemplars: HTTP ${res.status}</span>`;
         return;
       }
       const data = await res.json();
       renderExemplars(data.exemplars || []);
     } catch (err) {
-      $("exemplars").textContent = "Request failed: " + err.message;
+      $("exemplars").innerHTML = `<span class="empty-note">Request failed: ${escapeHtml(err.message)}</span>`;
     }
   }
 
   function renderExemplars(exemplars) {
     const container = $("exemplars");
     if (exemplars.length === 0) {
-      container.textContent = "No exemplars recorded for this issue yet.";
+      container.innerHTML = '<span class="empty-note">No exemplars recorded for this issue yet.</span>';
       return;
     }
     container.innerHTML = "";
-    for (const ev of exemplars) {
+    exemplars.forEach((ev, i) => {
       const div = document.createElement("div");
       div.className = "exemplar";
-      const source = ev.source ? ev.source.file + ":" + ev.source.line + " (" + ev.source.function + ")" : "";
+      const source = ev.source ? `${ev.source.file}:${ev.source.line} (${ev.source.function})` : "";
       const message = ev.error ? ev.error.message : "(no message)";
+      const errType = ev.error ? ev.error.type : ev.type;
       const stacktrace = ev.error ? ev.error.stacktrace : "";
+      const stackId = "stack" + i;
       div.innerHTML =
-        "<p class=\"exemplar-meta\">" +
-        escapeHtml(ev.exemplarRole) + " · " + escapeHtml(formatIST(ev.timestamp)) + " · trace " + escapeHtml(ev.trace ? ev.trace.traceId : "?") +
-        "</p>" +
-        "<p class=\"exemplar-meta\">" + escapeHtml(source) + "</p>" +
-        "<pre>" + escapeHtml(message) + (stacktrace ? "\n\n" + escapeHtml(stacktrace) : "") + "</pre>";
+        `<div class="exemplar-top">` +
+          `<span class="role-badge">${escapeHtml(ev.exemplarRole)}</span>` +
+          `<span class="exemplar-meta">${escapeHtml(formatIST(ev.timestamp))}</span>` +
+          `<span class="exemplar-meta mono">trace ${escapeHtml(ev.trace ? ev.trace.traceId : "?")}</span>` +
+        `</div>` +
+        (source ? `<div class="exemplar-source">${escapeHtml(source)}</div>` : "") +
+        `<div class="exemplar-message"><strong>${escapeHtml(errType || "")}:</strong> ${escapeHtml(message)}</div>` +
+        (stacktrace ? `
+          <div class="stack-wrap">
+            <button class="ghost copy-btn" data-copy-target="${stackId}">Copy</button>
+            <pre id="${stackId}">${escapeHtml(stacktrace)}</pre>
+          </div>` : "");
       container.appendChild(div);
+    });
+    container.querySelectorAll("[data-copy-target]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const text = document.getElementById(btn.dataset.copyTarget).textContent;
+        copyToClipboard(text, btn);
+      });
+    });
+  }
+
+  function copyToClipboard(text, btn) {
+    const done = () => { const old = btn.textContent; btn.textContent = "Copied"; setTimeout(() => btn.textContent = old, 1200); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => {});
     }
   }
 
@@ -195,6 +516,16 @@
     }[c]));
   }
 
+  document.querySelectorAll("#issuesTable th").forEach(th => {
+    th.addEventListener("click", () => {
+      const key = th.dataset.key;
+      if (sortKey === key) sortDir = sortDir === "asc" ? "desc" : "asc";
+      else { sortKey = key; sortDir = "asc"; }
+      renderAll();
+    });
+  });
+  $("search").addEventListener("input", renderAll);
+  $("fidelityFilter").addEventListener("change", renderAll);
   $("loadBtn").addEventListener("click", () => loadIssues(false));
   $("loadMoreBtn").addEventListener("click", () => loadIssues(true));
   if ($("apiKey").value) loadIssues(false);
