@@ -22,7 +22,7 @@
   "scripts": {
     "build": "tsc -b",
     "prepublishOnly": "pnpm run clean && pnpm run build",
-    "clean": "rm -rf dist *.tsbuildinfo",
+    "clean": "rimraf -g dist *.tsbuildinfo",
     "typecheck": "tsc -b",
     "test": "pnpm run test:unit",
     "test:unit": "vitest run"

@@ -7,7 +7,7 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc -b",
-    "clean": "rm -rf dist *.tsbuildinfo",
+    "clean": "rimraf -g dist *.tsbuildinfo",
     "typecheck": "tsc -b",
     "start": "node dist/index.js",
     "create-org": "node dist/create-org-cli.js",
