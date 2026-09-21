@@ -1,4 +1,4 @@
-# @bugbuster/sdk-node
+# @bugbusterhq/sdk-node
 
 The instrumentation SDK. Lives inside a customer's Node process — see
 [`docs/architecture/ingest-pipeline.md`](../../docs/architecture/ingest-pipeline.md) §3 (the hot
@@ -18,7 +18,7 @@ capture() -> recursion guard -> sampler -> ring buffer claim     [the hot path, 
 ## Public API
 
 ```ts
-import { init } from "@bugbuster/sdk-node";
+import { init } from "@bugbusterhq/sdk-node";
 
 const client = init({
   project: "hostel-os",
@@ -40,7 +40,7 @@ application doesn't have to hand-roll console interception, trace context, and a
 never-silently-lose-a-5xx safety net per integration:
 
 ```ts
-import { init, createExpressIntegration } from "@bugbuster/sdk-node";
+import { init, createExpressIntegration } from "@bugbusterhq/sdk-node";
 
 const client = init({ project: "my-app", apiKey: "sk_live_...", environment: "production" });
 const bb = createExpressIntegration(client);

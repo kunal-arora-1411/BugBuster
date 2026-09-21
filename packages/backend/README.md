@@ -1,4 +1,4 @@
-# @bugbuster/backend
+# @bugbusterhq/backend
 
 Ingest edge + processing + Query API — one Node process in v1
 (see [`docs/architecture/ingest-pipeline.md`](../../docs/architecture/ingest-pipeline.md) §8,
@@ -26,7 +26,7 @@ resolved `dbName`, not just "org B's data didn't appear in the response."
 See [`docs/schema.md`](../../docs/schema.md) for the full reference. Short version: one
 `bugbuster_control` database (org lookup), one `bugbuster_org_<name>` database per organization
 with `issues` / `events` / `deploys` collections. The **stored** `issues` document differs from
-the **public** `Issue` wire shape (`@bugbuster/types`) — see the comment atop
+the **public** `Issue` wire shape (`@bugbusterhq/types`) — see the comment atop
 `src/db/collections/issues.ts` for why: exact `usersAffected`/`duration`/`topEndpoints` are
 *derived* at read time from raw stored ingredients (a deduplicated user-ID set, raw duration
 samples, raw endpoint counts), because deriving them exactly requires the underlying values, not

@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { platform } from "node:process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { encodeEnvelope } from "@bugbuster/types";
-import type { Envelope } from "@bugbuster/types";
+import { encodeEnvelope } from "@bugbusterhq/types";
+import type { Envelope } from "@bugbusterhq/types";
 import { UdsServer } from "../../src/uds-server.js";
 import { AgentHttpClient } from "../../src/http-client.js";
 

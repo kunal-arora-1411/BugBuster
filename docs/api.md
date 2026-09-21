@@ -9,8 +9,8 @@ mechanism).
 
 The wire endpoint the Agent (or, in direct/fallback mode, the SDK itself) posts batches to.
 
-- **Body:** NDJSON-encoded `Envelope` (`@bugbuster/types`), optionally zstd-compressed with
-  `Content-Encoding: zstd` — set automatically by `@bugbuster/agent`'s `AgentHttpClient`.
+- **Body:** NDJSON-encoded `Envelope` (`@bugbusterhq/types`), optionally zstd-compressed with
+  `Content-Encoding: zstd` — set automatically by `@bugbusterhq/agent`'s `AgentHttpClient`.
 - **Success:** `202 Accepted`, empty body, with backpressure directive headers attached:
 
   | Header | Meaning |

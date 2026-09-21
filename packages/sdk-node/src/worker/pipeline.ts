@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { BugBusterEvent, ServiceContext } from "@bugbuster/types";
+import type { BugBusterEvent, ServiceContext } from "@bugbusterhq/types";
 import type { RawCapture } from "../raw-capture.js";
 import { parseStack } from "./stack.js";
 import { computeFingerprint } from "./fingerprint.js";

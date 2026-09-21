@@ -9,7 +9,7 @@
 // level — so this file exists purely to satisfy that detection, reusing the
 // same route registration as every other entry point via registerRoutes().
 import Fastify from "fastify";
-import { BackendConfigSchema } from "@bugbuster/types";
+import { BackendConfigSchema } from "@bugbusterhq/types";
 import { ControlDb } from "./src/db/control.js";
 import { registerRoutes } from "./src/build-server.js";
 

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { MongoClient } from "mongodb";
-import type { OrgRecord, ResolvedOrg } from "@bugbuster/types";
+import type { OrgRecord, ResolvedOrg } from "@bugbusterhq/types";
 
 /**
  * The shared control database (ingest-pipeline.md §8.4). Resolves an API key to

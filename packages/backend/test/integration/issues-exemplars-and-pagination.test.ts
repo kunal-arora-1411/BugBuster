@@ -1,7 +1,7 @@
 import { MongoMemoryServer } from "mongodb-memory-server";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import type { BugBusterEvent } from "@bugbuster/types";
+import type { BugBusterEvent } from "@bugbusterhq/types";
 import { ControlDb } from "../../src/db/control.js";
 import { buildServer } from "../../src/build-server.js";
 import { TenantDbResolver } from "../../src/db/tenant.js";

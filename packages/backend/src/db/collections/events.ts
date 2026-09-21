@@ -1,5 +1,5 @@
 import type { Collection, Db } from "mongodb";
-import type { BugBusterEvent } from "@bugbuster/types";
+import type { BugBusterEvent } from "@bugbusterhq/types";
 
 /** Individual raw exemplar payloads (§8.4) — capped per-issue by the caller (issues.ts's exemplar
  * cap check), not by this collection itself. Stores the full-fidelity doc.md-shaped event. */

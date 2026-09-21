@@ -1,4 +1,4 @@
-# @bugbuster/dashboard
+# @bugbusterhq/dashboard
 
 A read-only issue viewer against the Query API (`docs/api.md`). Still no auth flow, no settings,
 no build step, no framework — matching this project's own "build for validated need" principle

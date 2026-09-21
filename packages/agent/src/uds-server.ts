@@ -6,8 +6,8 @@ import type {
   EnvelopeItem,
   FoldDelta,
   Priority,
-} from "@bugbuster/types";
-import { decodeEnvelopeItems, encodeEnvelope } from "@bugbuster/types";
+} from "@bugbusterhq/types";
+import { decodeEnvelopeItems, encodeEnvelope } from "@bugbusterhq/types";
 import { mergeFoldDeltas } from "./merge-fold-deltas.js";
 import { buildOutgoingEnvelope, type PrioritizedExemplar } from "./build-outgoing-envelope.js";
 import type { AgentHttpClient } from "./http-client.js";

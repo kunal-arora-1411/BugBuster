@@ -11,7 +11,7 @@ import type { RawCapture } from "../../src/raw-capture.js";
  * capture should be roughly an order of magnitude cheaper than an exception capture, because the
  * exception path pays for V8's stack formatting and the log path doesn't.
  *
- * Run with: pnpm --filter @bugbuster/sdk-node bench
+ * Run with: pnpm --filter @bugbusterhq/sdk-node bench
  */
 
 function harness() {

@@ -1,5 +1,5 @@
 {
-  "name": "@bugbuster/backend",
+  "name": "@bugbusterhq/backend",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -16,7 +16,7 @@
     "test:integration": "vitest run test/integration"
   },
   "dependencies": {
-    "@bugbuster/types": "workspace:*",
+    "@bugbusterhq/types": "workspace:*",
     "fastify": "^5.2.0",
     "mongodb": "^6.12.0"
   },

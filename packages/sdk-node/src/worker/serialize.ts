@@ -4,14 +4,14 @@ import type {
   Envelope,
   EnvelopeItem,
   FoldDelta,
-} from "@bugbuster/types";
-import { encodeEnvelope, NEVER_SHED_PRIORITIES } from "@bugbuster/types";
+} from "@bugbusterhq/types";
+import { encodeEnvelope, NEVER_SHED_PRIORITIES } from "@bugbusterhq/types";
 
 /**
  * Builds the typed Envelope from one flush cycle's fold deltas, exemplars, and drop-counter meta.
  * No compression happens here: compression is the Agent's job (ingest-pipeline.md §6.2 — the SDK's
  * entire job is "serialize, write to a Unix domain socket, forget"), not the SDK's. The actual
- * wire encoding (encodeEnvelope/decodeEnvelopeItems) lives in @bugbuster/types as the shared codec
+ * wire encoding (encodeEnvelope/decodeEnvelopeItems) lives in @bugbusterhq/types as the shared codec
  * every side of the transport uses — see packages/types/src/codec.ts.
  */
 export function buildEnvelope(input: {

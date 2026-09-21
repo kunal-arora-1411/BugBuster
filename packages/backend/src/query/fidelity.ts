@@ -1,4 +1,4 @@
-import type { Issue } from "@bugbuster/types";
+import type { Issue } from "@bugbusterhq/types";
 
 /**
  * "Every response carries its own fidelity metadata" (blueprint plate 01) —

@@ -1,4 +1,4 @@
-import type { Directives, SampleDirective } from "@bugbuster/types";
+import type { Directives, SampleDirective } from "@bugbusterhq/types";
 import {
   DEFAULT_CONNECT_TIMEOUT_MS,
   DEFAULT_MAX_RETRIES,
@@ -7,7 +7,7 @@ import {
   HEADER_RETRY_AFTER,
   HEADER_SAMPLE_DIRECTIVE,
   HEADER_SUPPRESS_FINGERPRINTS,
-} from "@bugbuster/types";
+} from "@bugbusterhq/types";
 import type { Transport } from "./transport.js";
 import { TransportError } from "./transport.js";
 

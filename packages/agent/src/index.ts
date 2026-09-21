@@ -1,4 +1,4 @@
-import { AgentConfigSchema } from "@bugbuster/types";
+import { AgentConfigSchema } from "@bugbusterhq/types";
 import { CircuitBreaker } from "./circuit-breaker.js";
 import { AgentHttpClient } from "./http-client.js";
 import { DiskSpool } from "./spool.js";

@@ -1,5 +1,5 @@
 {
-  "name": "@bugbuster/sdk-node",
+  "name": "@bugbusterhq/sdk-node",
   "version": "0.1.0",
   "description": "The BugBuster instrumentation SDK — hot-path capture, client-side fingerprinting and folding, UDS/HTTP transport, and framework auto-instrumentation.",
   "publishConfig": {
@@ -29,7 +29,7 @@
     "bench": "vitest bench test/bench --run"
   },
   "dependencies": {
-    "@bugbuster/types": "workspace:^"
+    "@bugbusterhq/types": "workspace:^"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

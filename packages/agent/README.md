@@ -1,4 +1,4 @@
-# @bugbuster/agent
+# @bugbusterhq/agent
 
 ## Installing on a host (production)
 

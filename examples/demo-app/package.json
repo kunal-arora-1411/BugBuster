@@ -1,5 +1,5 @@
 {
-  "name": "@bugbuster/demo-app",
+  "name": "@bugbusterhq/demo-app",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -13,12 +13,12 @@
     "test:integration": "vitest run test"
   },
   "dependencies": {
-    "@bugbuster/sdk-node": "workspace:*",
+    "@bugbusterhq/sdk-node": "workspace:*",
     "express": "^4.21.2"
   },
   "devDependencies": {
-    "@bugbuster/agent": "workspace:*",
-    "@bugbuster/backend": "workspace:*",
+    "@bugbusterhq/agent": "workspace:*",
+    "@bugbusterhq/backend": "workspace:*",
     "@types/express": "^5.0.0",
     "mongodb-memory-server": "^10.1.2",
     "tsx": "^4.19.2",

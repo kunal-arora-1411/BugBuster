@@ -1,5 +1,5 @@
-import type { ServiceContext } from "@bugbuster/types";
-import { SdkConfigSchema, type SdkConfig } from "@bugbuster/types";
+import type { ServiceContext } from "@bugbusterhq/types";
+import { SdkConfigSchema, type SdkConfig } from "@bugbusterhq/types";
 import { RingBuffer } from "./ring-buffer.js";
 import { createSampler } from "./sampler.js";
 import { createDropCounters } from "./drop-counters.js";

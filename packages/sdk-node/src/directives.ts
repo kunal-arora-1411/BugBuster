@@ -1,5 +1,5 @@
-import type { Directives } from "@bugbuster/types";
-import { SUPPRESSION_WINDOW_MS } from "@bugbuster/types";
+import type { Directives } from "@bugbusterhq/types";
+import { SUPPRESSION_WINDOW_MS } from "@bugbusterhq/types";
 import type { Sampler } from "./sampler.js";
 
 /**

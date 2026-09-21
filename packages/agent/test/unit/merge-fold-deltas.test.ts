@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mergeFoldDeltas } from "../../src/merge-fold-deltas.js";
-import type { FoldDelta } from "@bugbuster/types";
+import type { FoldDelta } from "@bugbusterhq/types";
 
 function delta(overrides: Partial<FoldDelta>): FoldDelta {
   return {

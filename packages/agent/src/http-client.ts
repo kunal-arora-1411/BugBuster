@@ -1,11 +1,11 @@
 import { zstdCompressSync } from "node:zlib";
-import type { Directives, SampleDirective } from "@bugbuster/types";
+import type { Directives, SampleDirective } from "@bugbusterhq/types";
 import {
   HEADER_CONFIG_VERSION,
   HEADER_RETRY_AFTER,
   HEADER_SAMPLE_DIRECTIVE,
   HEADER_SUPPRESS_FINGERPRINTS,
-} from "@bugbuster/types";
+} from "@bugbusterhq/types";
 import { CircuitBreaker } from "./circuit-breaker.js";
 
 /**

@@ -1,4 +1,4 @@
-import { BackendConfigSchema } from "@bugbuster/types";
+import { BackendConfigSchema } from "@bugbusterhq/types";
 import { ControlDb } from "./db/control.js";
 import { buildServer } from "./build-server.js";
 

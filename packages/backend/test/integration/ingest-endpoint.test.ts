@@ -1,8 +1,8 @@
 import { MongoMemoryServer } from "mongodb-memory-server";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { encodeEnvelope, HEADER_CONFIG_VERSION, HEADER_SAMPLE_DIRECTIVE } from "@bugbuster/types";
-import type { Envelope } from "@bugbuster/types";
+import { encodeEnvelope, HEADER_CONFIG_VERSION, HEADER_SAMPLE_DIRECTIVE } from "@bugbusterhq/types";
+import type { Envelope } from "@bugbusterhq/types";
 import { ControlDb } from "../../src/db/control.js";
 import { buildServer } from "../../src/build-server.js";
 import { _resetOrgCacheForTests } from "../../src/ingest/edge.js";

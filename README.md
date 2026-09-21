@@ -181,7 +181,7 @@ Dashboard (Query API)
 
 Every hop above is exercised for real, automatically, in
 [`examples/demo-app/test/full-pipeline.test.ts`](examples/demo-app/test/full-pipeline.test.ts) —
-run `pnpm --filter @bugbuster/demo-app test:integration` to see it happen without touching a
+run `pnpm --filter @bugbusterhq/demo-app test:integration` to see it happen without touching a
 terminal by hand.
 
 ## Status
@@ -195,8 +195,8 @@ see `examples/demo-app/README.md` for what they were and why isolated testing mi
 
 ```bash
 pnpm test:unit          # every package's unit tests — no external services needed
-pnpm --filter @bugbuster/backend test:integration   # real MongoDB via mongodb-memory-server
-pnpm --filter @bugbuster/demo-app test:integration  # the full end-to-end pipeline
+pnpm --filter @bugbusterhq/backend test:integration   # real MongoDB via mongodb-memory-server
+pnpm --filter @bugbusterhq/demo-app test:integration  # the full end-to-end pipeline
 ```
 
 What's deliberately not built yet, and why, is tracked in

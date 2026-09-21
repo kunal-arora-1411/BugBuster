@@ -1,6 +1,6 @@
 import { connect } from "node:net";
 import { existsSync } from "node:fs";
-import type { Directives } from "@bugbuster/types";
+import type { Directives } from "@bugbusterhq/types";
 import type { Transport } from "./transport.js";
 import { TransportError } from "./transport.js";
 

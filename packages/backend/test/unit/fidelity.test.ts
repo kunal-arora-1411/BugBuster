@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { attachFidelity } from "../../src/query/fidelity.js";
-import type { Issue } from "@bugbuster/types";
+import type { Issue } from "@bugbusterhq/types";
 
 function issue(overrides: Partial<Issue> = {}): Issue {
   return {

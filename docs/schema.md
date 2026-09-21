@@ -24,7 +24,7 @@ directly, not just "the response happened not to contain the other org's data."
 
 ## `issues` collection
 
-**The stored document is not the same shape as the public `Issue` type** (`@bugbuster/types`).
+**The stored document is not the same shape as the public `Issue` type** (`@bugbusterhq/types`).
 `usersAffected`, `duration`, and `topEndpoints` are *derived* fields in the public API — computing
 them exactly requires the raw underlying values, which the stored document keeps:
 

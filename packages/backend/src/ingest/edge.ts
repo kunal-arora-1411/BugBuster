@@ -1,4 +1,4 @@
-import type { ResolvedOrg } from "@bugbuster/types";
+import type { ResolvedOrg } from "@bugbusterhq/types";
 import type { ControlDb } from "../db/control.js";
 
 /**

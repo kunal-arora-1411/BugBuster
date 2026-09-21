@@ -1,10 +1,10 @@
 import { MongoServerError, type Collection, type Db } from "mongodb";
-import type { ExemplarRef, FoldDelta, Issue } from "@bugbuster/types";
+import type { ExemplarRef, FoldDelta, Issue } from "@bugbusterhq/types";
 
 const DUPLICATE_KEY_ERROR_CODE = 11000;
 
 /**
- * The internal storage shape differs from the public `Issue` wire shape (@bugbuster/types) by
+ * The internal storage shape differs from the public `Issue` wire shape (@bugbusterhq/types) by
  * design: `usersAffected`, `duration`, and `topEndpoints` are DERIVED fields in the public shape
  * (ingest-pipeline.md §4.2 — exact for v1, sketch-shaped later). To derive them exactly, the
  * document itself must hold the raw ingredients — the deduplicated user-ID set, the raw duration

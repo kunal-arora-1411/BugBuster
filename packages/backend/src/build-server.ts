@@ -1,12 +1,12 @@
 import { zstdDecompressSync } from "node:zlib";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
-import type { BackendConfig, ResolvedOrg } from "@bugbuster/types";
+import type { BackendConfig, ResolvedOrg } from "@bugbusterhq/types";
 import {
   HEADER_CONFIG_VERSION,
   HEADER_RETRY_AFTER,
   HEADER_SAMPLE_DIRECTIVE,
   HEADER_SUPPRESS_FINGERPRINTS,
-} from "@bugbuster/types";
+} from "@bugbusterhq/types";
 import type { ControlDb } from "./db/control.js";
 import { TenantDbResolver } from "./db/tenant.js";
 import { extractBearerToken, resolveOrgForRequest } from "./ingest/edge.js";

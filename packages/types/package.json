@@ -1,5 +1,5 @@
 {
-  "name": "@bugbuster/types",
+  "name": "@bugbusterhq/types",
   "version": "0.1.0",
   "description": "Wire-format contract shared by every BugBuster package — envelope, event, issue, and header shapes.",
   "publishConfig": {

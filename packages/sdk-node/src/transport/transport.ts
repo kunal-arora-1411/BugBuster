@@ -1,4 +1,4 @@
-import type { Directives } from "@bugbuster/types";
+import type { Directives } from "@bugbusterhq/types";
 
 /**
  * The seam ingest-pipeline.md §6.3 requires: the capture/fold pipeline talks to this interface,

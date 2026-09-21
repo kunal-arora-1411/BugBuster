@@ -1,5 +1,5 @@
 import type { Db } from "mongodb";
-import { decodeEnvelopeItems } from "@bugbuster/types";
+import { decodeEnvelopeItems } from "@bugbusterhq/types";
 import { addExemplarRef, upsertFoldDelta } from "../db/collections/issues.js";
 import { insertExemplar } from "../db/collections/events.js";
 

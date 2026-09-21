@@ -1,4 +1,4 @@
-import type { FoldDelta } from "@bugbuster/types";
+import type { FoldDelta } from "@bugbusterhq/types";
 
 /**
  * Cross-process folding (ingest-pipeline.md §6.2) — the Agent's actual reason to exist. Multiple

@@ -6,7 +6,7 @@ import { buildServer } from "../../src/build-server.js";
 import { upsertFoldDelta } from "../../src/db/collections/issues.js";
 import { TenantDbResolver } from "../../src/db/tenant.js";
 import { _resetOrgCacheForTests } from "../../src/ingest/edge.js";
-import type { FoldDelta } from "@bugbuster/types";
+import type { FoldDelta } from "@bugbusterhq/types";
 
 /**
  * The single most safety-critical test in the whole system (implementation plan §6): org A's

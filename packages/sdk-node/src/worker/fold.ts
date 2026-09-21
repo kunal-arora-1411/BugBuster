@@ -1,11 +1,11 @@
-import type { BugBusterEvent, FoldDelta } from "@bugbuster/types";
+import type { BugBusterEvent, FoldDelta } from "@bugbusterhq/types";
 
 /**
  * The in-process fold table (ingest-pipeline.md §4). Groups occurrences by fingerprint within a
  * flush window and emits the RAW ingredients (`FoldDelta`) the backend needs to merge into the
  * persisted aggregate — not pre-computed percentiles or cardinality, which are only correct once
  * merged across every process that observed the fingerprint (§4.2's exact-for-v1 fields live in
- * @bugbuster/types `Issue`, not here).
+ * @bugbusterhq/types `Issue`, not here).
  */
 
 export interface FoldRecordInput {

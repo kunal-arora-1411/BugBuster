@@ -4,9 +4,9 @@ import { platform } from "node:process";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { ControlDb, buildServer } from "@bugbuster/backend";
-import { AgentHttpClient, UdsServer } from "@bugbuster/agent";
-import { init, type BugBusterClient } from "@bugbuster/sdk-node";
+import { ControlDb, buildServer } from "@bugbusterhq/backend";
+import { AgentHttpClient, UdsServer } from "@bugbusterhq/agent";
+import { init, type BugBusterClient } from "@bugbusterhq/sdk-node";
 
 /**
  * The genuine end-to-end proof (implementation plan M5's done criteria): a real SDK captures a

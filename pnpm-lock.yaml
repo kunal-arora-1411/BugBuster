@@ -35,17 +35,17 @@ importers:
 
   examples/demo-app:
     dependencies:
-      '@bugbuster/sdk-node':
+      '@bugbusterhq/sdk-node':
         specifier: workspace:*
         version: link:../../packages/sdk-node
       express:
         specifier: ^4.21.2
         version: 4.22.2
     devDependencies:
-      '@bugbuster/agent':
+      '@bugbusterhq/agent':
         specifier: workspace:*
         version: link:../../packages/agent
-      '@bugbuster/backend':
+      '@bugbusterhq/backend':
         specifier: workspace:*
         version: link:../../packages/backend
       '@types/express':
@@ -66,7 +66,7 @@ importers:
 
   packages/agent:
     dependencies:
-      '@bugbuster/types':
+      '@bugbusterhq/types':
         specifier: workspace:^
         version: link:../types
     devDependencies:
@@ -79,7 +79,7 @@ importers:
 
   packages/backend:
     dependencies:
-      '@bugbuster/types':
+      '@bugbusterhq/types':
         specifier: workspace:*
         version: link:../types
       fastify:
@@ -103,7 +103,7 @@ importers:
 
   packages/sdk-node:
     dependencies:
-      '@bugbuster/types':
+      '@bugbusterhq/types':
         specifier: workspace:^
         version: link:../types
     devDependencies:

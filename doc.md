@@ -167,7 +167,7 @@ That's far more interesting than simply installing an OTel package.
 For example:
 
 ```javascript
-import { BugBuster } from "@bugbuster/node";
+import { BugBuster } from "@bugbusterhq/node";
 
 BugBuster.init({
     project: "hostel-os",

@@ -1,12 +1,12 @@
-# @bugbuster/demo-app
+# @bugbusterhq/demo-app
 
 Two things live here:
 
-1. **`src/index.ts`** — a tiny Express app instrumented with `@bugbuster/sdk-node`, for manual
+1. **`src/index.ts`** — a tiny Express app instrumented with `@bugbusterhq/sdk-node`, for manual
    testing against a real Agent + backend + MongoDB. See
    [`docs/runbook.md`](../../docs/runbook.md) for how to run the whole stack.
-2. **`test/full-pipeline.test.ts`** — the genuine end-to-end proof: a real `@bugbuster/sdk-node`
-   client, a real `@bugbuster/agent` `UdsServer`, a real `@bugbuster/backend` Fastify instance, and
+2. **`test/full-pipeline.test.ts`** — the genuine end-to-end proof: a real `@bugbusterhq/sdk-node`
+   client, a real `@bugbusterhq/agent` `UdsServer`, a real `@bugbusterhq/backend` Fastify instance, and
    a real MongoDB (via `mongodb-memory-server`), wired together in one test. Every component is
    the actual production class — only the "separate OS process" boundary is collapsed, which
    doesn't change any wire protocol being exercised.

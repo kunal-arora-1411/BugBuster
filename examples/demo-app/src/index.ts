@@ -1,5 +1,5 @@
 import express from "express";
-import { init } from "@bugbuster/sdk-node";
+import { init } from "@bugbusterhq/sdk-node";
 
 /**
  * A minimal instrumented service — the manual-testing target for the whole pipeline. See

@@ -5,7 +5,7 @@ import type {
   EnvelopeItem,
   FoldDelta,
   Priority,
-} from "@bugbuster/types";
+} from "@bugbusterhq/types";
 
 /** Combines drop-counter meta records from every SDK connection this window into one. */
 export function mergeDropCounters(all: readonly DropCounters[]): DropCounters {

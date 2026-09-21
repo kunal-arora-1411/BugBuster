@@ -1,5 +1,5 @@
 {
-  "name": "@bugbuster/agent",
+  "name": "@bugbusterhq/agent",
   "version": "0.1.0",
   "description": "The required host-local BugBuster daemon (v1) — cross-process fold merging, disk spool, and the only thing that makes the HTTPS hop to the backend.",
   "publishConfig": {
@@ -29,7 +29,7 @@
     "test:unit": "vitest run test/unit"
   },
   "dependencies": {
-    "@bugbuster/types": "workspace:^"
+    "@bugbusterhq/types": "workspace:^"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

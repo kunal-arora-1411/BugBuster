@@ -1,4 +1,4 @@
-import type { SampleDirective } from "@bugbuster/types";
+import type { SampleDirective } from "@bugbusterhq/types";
 
 export type CaptureKind = keyof SampleDirective; // "error" | "log" | "span"
 

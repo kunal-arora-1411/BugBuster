@@ -1,7 +1,7 @@
 import { MongoMemoryServer } from "mongodb-memory-server";
 import { MongoClient, type Db } from "mongodb";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { BugBusterEvent, FoldDelta } from "@bugbuster/types";
+import type { BugBusterEvent, FoldDelta } from "@bugbusterhq/types";
 import {
   addExemplarRef,
   ensureIssuesIndexes,

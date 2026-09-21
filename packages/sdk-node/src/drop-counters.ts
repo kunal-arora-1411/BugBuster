@@ -1,4 +1,4 @@
-import type { DropCounters } from "@bugbuster/types";
+import type { DropCounters } from "@bugbusterhq/types";
 
 /**
  * "Drop counters are sacred" (ingest-pipeline.md §3.4) — mutable, process-local, read by the

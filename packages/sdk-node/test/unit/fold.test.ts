@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FoldTable, COARSENED_KEY, MAX_EXEMPLARS_PER_ISSUE } from "../../src/worker/fold.js";
-import type { BugBusterEvent } from "@bugbuster/types";
+import type { BugBusterEvent } from "@bugbusterhq/types";
 
 function makeEvent(overrides: Partial<BugBusterEvent> = {}): BugBusterEvent {
   return {
