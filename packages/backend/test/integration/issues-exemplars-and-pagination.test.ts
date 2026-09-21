@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import type { BugBusterEvent } from "@bugbuster/types";
 import { ControlDb } from "../../src/db/control.js";
-import { buildServer } from "../../src/server.js";
+import { buildServer } from "../../src/build-server.js";
 import { TenantDbResolver } from "../../src/db/tenant.js";
 import { addExemplarRef, ensureIssuesIndexes, upsertFoldDelta } from "../../src/db/collections/issues.js";
 import { ensureEventsIndexes, insertExemplar } from "../../src/db/collections/events.js";

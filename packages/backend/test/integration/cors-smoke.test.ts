@@ -2,7 +2,7 @@ import { MongoMemoryServer } from "mongodb-memory-server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { ControlDb } from "../../src/db/control.js";
-import { buildServer } from "../../src/server.js";
+import { buildServer } from "../../src/build-server.js";
 
 let mongo: MongoMemoryServer;
 let controlDb: ControlDb;

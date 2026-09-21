@@ -43,8 +43,14 @@ async function requireOrg(
   return org;
 }
 
-export function buildServer(config: BackendConfig, controlDb: ControlDb): FastifyInstance {
-  const app = Fastify({ bodyLimit: config.ingestMaxBodyBytes });
+/**
+ * Registers every route/hook onto an already-constructed Fastify instance. Split out from
+ * buildServer() so a Vercel deployment entrypoint (app.ts) can construct the Fastify instance
+ * itself with a direct `import Fastify from "fastify"` — Vercel's zero-config Fastify detection
+ * requires that exact pattern in the recognized entrypoint file, not just a helper that returns
+ * an instance internally.
+ */
+export function registerRoutes(app: FastifyInstance, controlDb: ControlDb): void {
   const tenants = new TenantDbResolver(controlDb.getClient());
 
   // Dev-friendly CORS so a locally-opened static dashboard (packages/dashboard) can call the
@@ -163,6 +169,10 @@ export function buildServer(config: BackendConfig, controlDb: ControlDb): Fastif
       await reply.send({ exemplars });
     },
   );
+}
 
+export function buildServer(config: BackendConfig, controlDb: ControlDb): FastifyInstance {
+  const app = Fastify({ bodyLimit: config.ingestMaxBodyBytes });
+  registerRoutes(app, controlDb);
   return app;
 }

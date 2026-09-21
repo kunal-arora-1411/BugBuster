@@ -9,3 +9,5 @@ coverage/
 .DS_Store
 *.tsbuildinfo
 .pnpm-store/
+.vercel
+.env*

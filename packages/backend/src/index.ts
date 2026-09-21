@@ -1,10 +1,10 @@
 import { BackendConfigSchema } from "@bugbuster/types";
 import { ControlDb } from "./db/control.js";
-import { buildServer } from "./server.js";
+import { buildServer } from "./build-server.js";
 
 export { ControlDb, hashApiKey } from "./db/control.js";
 export { TenantDbResolver } from "./db/tenant.js";
-export { buildServer } from "./server.js";
+export { buildServer } from "./build-server.js";
 export * from "./db/collections/issues.js";
 export * from "./db/collections/events.js";
 export * from "./db/collections/deploys.js";

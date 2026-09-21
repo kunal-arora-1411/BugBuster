@@ -4,7 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { encodeEnvelope, HEADER_CONFIG_VERSION, HEADER_SAMPLE_DIRECTIVE } from "@bugbuster/types";
 import type { Envelope } from "@bugbuster/types";
 import { ControlDb } from "../../src/db/control.js";
-import { buildServer } from "../../src/server.js";
+import { buildServer } from "../../src/build-server.js";
 import { _resetOrgCacheForTests } from "../../src/ingest/edge.js";
 
 let mongo: MongoMemoryServer;
