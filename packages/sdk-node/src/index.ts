@@ -21,6 +21,11 @@ export { computeFingerprint, computeCoarsenedFingerprint } from "./worker/finger
 export { HttpTransport } from "./transport/http-transport.js";
 export { UdsTransport, isAgentSocketAvailable } from "./transport/uds-transport.js";
 export type { Transport } from "./transport/transport.js";
+export {
+  createExpressIntegration,
+  type BugBusterExpressIntegration,
+  type ExpressRequestLike,
+} from "./integrations/express.js";
 
 const SDK_VERSION = "0.0.0";
 

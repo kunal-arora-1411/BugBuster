@@ -33,6 +33,32 @@ client.captureMessage("something worth knowing, not an error");
 await client.shutdown();
 ```
 
+## Framework integrations
+
+Auto-instrumentation for Express (or any Connect-style `(req, res, next)` framework), so a host
+application doesn't have to hand-roll console interception, trace context, and a
+never-silently-lose-a-5xx safety net per integration:
+
+```ts
+import { init, createExpressIntegration } from "@bugbuster/sdk-node";
+
+const client = init({ project: "my-app", apiKey: "sk_live_...", environment: "production" });
+const bb = createExpressIntegration(client);
+
+bb.instrumentConsole();      // console.error(Error) / console.warn(Error | string) auto-captured
+app.use(bb.requestHandler);  // mount before routes — propagates trace context per request
+
+// in your own catch blocks / error middleware:
+bb.captureException(err);
+bb.captureMessage("something worth knowing, not an error");
+```
+
+`bb.requestHandler` synthesizes a `HandledHttpError` for any 5xx response that nothing else
+already reported — but never a duplicate if `bb.captureException`/`bb.captureMessage` (or
+`instrumentConsole`'s console hooks) already captured something during that same request. The
+core `captureException` also dedupes the same `Error` *object* captured twice (e.g. via a console
+hook and a manual call for the same thrown error) — one occurrence, not two.
+
 ## Transport: Agent mode is the production path, not HttpTransport
 
 Per ingest-pipeline.md §6.3, `init()` probes `agentSocketPath` (default

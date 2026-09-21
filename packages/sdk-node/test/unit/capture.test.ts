@@ -83,4 +83,19 @@ describe("capture hot path", () => {
     // only the outer capture (which runs to completion after the guard resets) is recorded.
     expect(ring.length).toBe(1);
   });
+
+  it("dedupes the same Error object captured twice (e.g. a console hook plus a manual call)", () => {
+    const { engine, ring } = harness();
+    const err = new Error("same object, captured twice");
+    engine.captureException(err);
+    engine.captureException(err);
+    expect(ring.length).toBe(1);
+  });
+
+  it("does not dedupe two different Error objects with identical messages", () => {
+    const { engine, ring } = harness();
+    engine.captureException(new Error("same message"));
+    engine.captureException(new Error("same message"));
+    expect(ring.length).toBe(2);
+  });
 });

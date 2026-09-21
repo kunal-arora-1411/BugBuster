@@ -34,6 +34,12 @@ let inCapture = false;
 const APPROX_BYTES_PER_CAPTURE = 2048;
 
 export function createCaptureEngine(deps: CaptureEngineDeps): CaptureEngine {
+  // Guards the common footgun of auto-instrumentation layered over manual calls (e.g. a
+  // console.error hook AND an explicit captureException(err) firing for the same thrown error
+  // within one request) — the same Error OBJECT captured twice must count once, not twice.
+  // WeakSet so a long-lived process never retains errors past their own lifetime.
+  const seenErrors = new WeakSet<object>();
+
   function capture(
     kind: RawCapture["kind"],
     payload: Pick<RawCapture, "error" | "message">,
@@ -80,6 +86,10 @@ export function createCaptureEngine(deps: CaptureEngineDeps): CaptureEngine {
     // not surfaced — a telemetry SDK that can crash the app is worse than no telemetry.
     captureException(error, extra) {
       try {
+        if (typeof error === "object" && error !== null) {
+          if (seenErrors.has(error)) return;
+          seenErrors.add(error);
+        }
         const err = error instanceof Error ? error : new Error(String(error));
         capture("exception", { error: err }, extra);
       } catch {
