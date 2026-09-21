@@ -1,5 +1,20 @@
 # @bugbuster/agent
 
+## Installing on a host (production)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kunal-arora-1411/BugBuster/main/packages/agent/scripts/install.sh | sudo bash -s -- \
+  --api-key <your-api-key> \
+  --backend-url https://your-backend.example.com/ingest
+```
+
+Installs the Agent as a real systemd service (`bugbuster-agent`) — one per host, independent of
+any application's own process manager (PM2, systemd unit for the app, etc.), so it survives app
+deploys and restarts. Safe to re-run for upgrades. See `scripts/install.sh --help` for all
+options (custom socket path, disk spool location, pinning a specific commit), and
+`scripts/uninstall.sh` to remove it. Verify with `systemctl status bugbuster-agent` /
+`journalctl -u bugbuster-agent -f`.
+
 The required host-local daemon (v1) — see
 [`docs/architecture/ingest-pipeline.md`](../../docs/architecture/ingest-pipeline.md) §6 and
 blueprint plates 01/04/05B. Every backend-hosted SDK on a host talks to the one Agent running
