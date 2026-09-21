@@ -1,15 +1,27 @@
 {
   "name": "@bugbuster/types",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
+  "description": "Wire-format contract shared by every BugBuster package — envelope, event, issue, and header shapes.",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js"
   },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kunal-arora-1411/BugBuster.git",
+    "directory": "packages/types"
+  },
   "scripts": {
     "build": "tsc -b",
+    "prepublishOnly": "pnpm run clean && pnpm run build",
     "clean": "rm -rf dist *.tsbuildinfo",
     "typecheck": "tsc -b",
     "test": "pnpm run test:unit",

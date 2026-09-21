@@ -1,15 +1,27 @@
 {
   "name": "@bugbuster/sdk-node",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
+  "description": "The BugBuster instrumentation SDK — hot-path capture, client-side fingerprinting and folding, UDS/HTTP transport, and framework auto-instrumentation.",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js"
   },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kunal-arora-1411/BugBuster.git",
+    "directory": "packages/sdk-node"
+  },
   "scripts": {
     "build": "tsc -b",
+    "prepublishOnly": "pnpm run clean && pnpm run build",
     "clean": "rm -rf dist *.tsbuildinfo",
     "typecheck": "tsc -b",
     "test": "pnpm run test:unit",
@@ -17,7 +29,7 @@
     "bench": "vitest bench test/bench --run"
   },
   "dependencies": {
-    "@bugbuster/types": "workspace:*"
+    "@bugbuster/types": "workspace:^"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

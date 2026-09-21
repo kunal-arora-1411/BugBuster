@@ -64,7 +64,7 @@ importers:
   packages/agent:
     dependencies:
       '@bugbuster/types':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../types
     devDependencies:
       typescript:
@@ -101,7 +101,7 @@ importers:
   packages/sdk-node:
     dependencies:
       '@bugbuster/types':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../types
     devDependencies:
       typescript:

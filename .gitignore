@@ -11,3 +11,4 @@ coverage/
 .pnpm-store/
 .vercel
 .env*
+.vs/
