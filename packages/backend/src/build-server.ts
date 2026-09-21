@@ -62,6 +62,16 @@ export function registerRoutes(app: FastifyInstance, controlDb: ControlDb): void
     return payload;
   });
 
+  // A cross-origin fetch carrying an Authorization header (every real request this API takes)
+  // is non-simple, so browsers preflight it with OPTIONS first — without a route for it, Fastify
+  // 404s the preflight itself and the browser blocks the real request before it's ever sent. The
+  // onSend hook above never gets a chance to help: it decorates a response, but there's no
+  // matched route to send one from.
+  app.options("/*", async (_request, reply) => {
+    reply.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    await reply.code(204).send();
+  });
+
   // NDJSON bodies pass through without any JSON parsing here — see ingest/edge.ts's v1 nuance on
   // "never parse the body": that guarantee is about not interpreting the envelope's CONTENTS, not
   // about the transport encoding. Decompression happens here because it's a wire-format detail

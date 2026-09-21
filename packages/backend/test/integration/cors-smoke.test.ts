@@ -35,4 +35,15 @@ describe("CORS for the dashboard", () => {
     const body = JSON.parse(res.body);
     expect(Array.isArray(body.issues)).toBe(true);
   });
+
+  it("OPTIONS preflight against any route succeeds (an Authorization header makes every real request non-simple, so a browser preflights it first)", async () => {
+    const res = await app.inject({
+      method: "OPTIONS",
+      url: "/issues",
+      headers: { origin: "http://localhost:5173", "access-control-request-headers": "authorization" },
+    });
+    expect(res.statusCode).toBe(204);
+    expect(res.headers["access-control-allow-origin"]).toBe("*");
+    expect(res.headers["access-control-allow-methods"]).toContain("GET");
+  });
 });
