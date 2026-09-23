@@ -11,6 +11,28 @@ export function hashApiKey(apiKey: string): string {
   return createHash("sha256").update(apiKey).digest("hex");
 }
 
+/**
+ * Retries a handful of times with a short backoff: Atlas TLS handshakes intermittently fail with
+ * a transient "SSL alert internal error" (observed repeatedly in production against this cluster)
+ * that reliably succeeds on the very next attempt. Uncaught, a failure here crashes the entire
+ * process on a cold start (Node's default for a rejected top-level await) — on Vercel that means
+ * one failed request per unlucky cold start, for a failure mode that isn't actually persistent.
+ */
+export async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  { attempts = 3, delayMs = 300 }: { attempts?: number; delayMs?: number } = {},
+): Promise<T> {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt === attempts) throw err;
+      await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));
+    }
+  }
+  throw new Error("unreachable"); // satisfies the return type; the loop always returns or throws
+}
+
 export class ControlDb {
   private readonly client: MongoClient;
 
@@ -19,7 +41,7 @@ export class ControlDb {
   }
 
   async connect(): Promise<void> {
-    await this.client.connect();
+    await retryWithBackoff(() => this.client.connect());
     await this.orgs().createIndex({ apiKeyHash: 1 }, { unique: true });
     await this.orgs().createIndex({ orgId: 1 }, { unique: true });
   }
