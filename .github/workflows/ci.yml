@@ -15,9 +15,13 @@ jobs:
       # "packageManager" field, and errors if both are set. One source of truth.
       - uses: pnpm/action-setup@v4
 
+      # Node 22, not 20: the Agent compresses with Node's built-in zstd (node:zlib's
+      # zstdCompressSync, added in Node 22.15) and the backend decompresses with it. On Node 20
+      # those calls don't exist and the agent/backend tests fail with "zstdCompressSync is not a
+      # function".
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
