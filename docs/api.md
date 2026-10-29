@@ -115,8 +115,78 @@ database). An issue with no recorded exemplars yet returns `{"exemplars": []}`, 
 The dashboard (`packages/dashboard`) calls this on row click to show the full event alongside the
 aggregate — previously the only way to see one was querying the `events` collection directly.
 
+## `GET /logs`
+
+Application log lines, newest first — the "normal logs" half of the product. Unlike issues, logs
+are never folded: one stored document per line (see [`schema.md`](schema.md)).
+
+**Query params** (all optional; combine with AND):
+
+| Param | Meaning |
+|---|---|
+| `level` | Exact levels to include, comma-separated: `debug`, `info`, `warn`, `error` (e.g. `?level=warn,error`). Case-insensitive. |
+| `service` | Exact service name (the SDK's `project`). |
+| `environment` | Exact environment (`production`, `staging`, ...). |
+| `traceId` | Everything logged during one request — the link from an error to its logs. |
+| `q` | Case-insensitive **substring** match on the message. Treated literally: `a.b` matches `a.b`, never `axb`; regex characters are not interpreted. Max 200 chars. |
+| `from`, `to` | ISO-8601 bounds on the line's timestamp (inclusive). |
+| `limit` | Lines per page (default 100, max 500). |
+| `cursor` | Opaque token from a previous response's `nextCursor`. |
+
+**Response:**
+```json
+{
+  "logs": [
+    {
+      "logId": "01a1871e0423-000006-ff0ff556",
+      "timestamp": "2026-10-29T10:04:13.731Z",
+      "level": "error",
+      "message": "payment capture failed after retries",
+      "fields": { "orderId": "o_1042", "code": "GATEWAY_TIMEOUT", "apiKey": "[redacted]" },
+      "trace": { "traceId": "ccd02add-7e31-4632-a12a-3a19f5c...", "spanId": "..." },
+      "service": { "name": "billing-svc", "version": "3.1.0", "environment": "production" }
+    }
+  ],
+  "nextCursor": "eyJ0IjoxNzYx..."
+}
+```
+
+`trace` is present only for lines logged inside a request (via the Express integration's
+`requestHandler`); background-job lines have none. `fields` is present only when the line had
+structured fields. `nextCursor` is present only when older lines remain; it pins
+`(timestamp, logId)` so paging is exact even when many lines share a millisecond.
+
+**Ordering:** `logId` is time-sortable (epoch-ms, then a per-process sequence, then random), so
+lines written back-to-back in the same millisecond come back in true write order (newest first).
+
+**Errors:** `400` for an unknown `level`, an unparseable `from`/`to`, `from` after `to`, or an
+invalid `cursor` — never a silently wrong page. Searches are bounded by a server-side time limit so
+a pathological query cannot pin the database.
+
+## `GET /logs/facets`
+
+`{ "services": ["billing-svc", "demo-app"], "environments": ["development", "production"] }` —
+the distinct values present in the org's logs, for filter dropdowns. Cached for up to 60 s per
+org, and invalidated whenever new logs are ingested.
+
+## Log items on `POST /ingest`
+
+The same endpoint carries logs: an NDJSON envelope may now contain items of
+`type: "log"` alongside `fold`, `exemplar`, and `meta`. Each is validated against `LogEntrySchema`
+(`@bugbusterhq/types`); a malformed line is discarded without affecting the rest of the batch, and a
+line whose `logId` was already stored (a retried batch) is skipped, not duplicated. The backend also
+re-applies its own bounds regardless of what the sender claims: messages over 8 KB are truncated,
+`fields` over 16 KB are replaced by `{ "_truncated": true }`, field keys containing `.` or starting
+with `$` are rewritten, and a timestamp more than 5 minutes in the future is replaced by the
+server's time.
+
+Retention: lines older than `BUGBUSTER_LOG_RETENTION_DAYS` (default 7; `0` = keep forever) are
+deleted by a MongoDB TTL index on the server's receive time.
+
 ## Not yet built
 
+- Searching inside structured `fields` (e.g. `?field.orderId=o_1042`) — fields are stored as real
+  sub-documents with Mongo-safe keys, so this is a query addition, not a schema change.
 - Any write/management endpoints (creating orgs, rotating API keys) — `ControlDb.createOrg` exists
   as an admin/test helper only, not exposed over HTTP. This is a considered v1 choice, not an
   oversight (see `packages/backend/src/create-org-cli.ts`): at pilot scale, org creation is rare

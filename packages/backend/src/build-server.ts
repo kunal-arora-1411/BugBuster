@@ -6,6 +6,8 @@ import {
   HEADER_RETRY_AFTER,
   HEADER_SAMPLE_DIRECTIVE,
   HEADER_SUPPRESS_FINGERPRINTS,
+  LogLevelSchema,
+  type LogLevel,
 } from "@bugbusterhq/types";
 import type { ControlDb } from "./db/control.js";
 import { TenantDbResolver } from "./db/tenant.js";
@@ -13,12 +15,76 @@ import { extractBearerToken, resolveOrgForRequest } from "./ingest/edge.js";
 import { processEnvelope } from "./ingest/processor.js";
 import { decodeIssuesCursor, getIssue, listIssues } from "./db/collections/issues.js";
 import { getExemplarsByIds } from "./db/collections/events.js";
+import { decodeLogsCursor, getLogFacets, queryLogs, type LogQuery } from "./db/collections/logs.js";
 import { attachFidelity } from "./query/fidelity.js";
 import { computeDirectives } from "./directives.js";
 
 const CONFIG_VERSION = 1;
 const DEFAULT_ISSUES_LIMIT = 50;
 const MAX_ISSUES_LIMIT = 200;
+const DEFAULT_LOGS_LIMIT = 100;
+const MAX_LOGS_LIMIT = 500;
+const FACETS_CACHE_MS = 60_000;
+
+/** A query-string value is a string only if the caller sent exactly one; repeats arrive as arrays. */
+function singleString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/**
+ * Parses/validates `GET /logs` query parameters. Returns either a ready LogQuery or the message
+ * of the first thing wrong with the request (→ 400) — never a silently-wrong result.
+ */
+export function parseLogQuery(q: Record<string, unknown>): { query: LogQuery } | { error: string } {
+  let levels: LogLevel[] | undefined;
+  const levelRaw = singleString(q.level);
+  if (levelRaw !== undefined) {
+    levels = [];
+    for (const part of levelRaw.split(",")) {
+      const parsed = LogLevelSchema.safeParse(part.trim().toLowerCase());
+      if (!parsed.success) return { error: `invalid level: ${part}` };
+      levels.push(parsed.data);
+    }
+  }
+
+  const dates: Record<"from" | "to", Date | undefined> = { from: undefined, to: undefined };
+  for (const key of ["from", "to"] as const) {
+    const raw = singleString(q[key]);
+    if (raw === undefined) continue;
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return { error: `invalid ${key}` };
+    dates[key] = d;
+  }
+  if (dates.from && dates.to && dates.from > dates.to)
+    return { error: "from must not be after to" };
+
+  let cursor;
+  const cursorRaw = singleString(q.cursor);
+  if (cursorRaw !== undefined) {
+    cursor = decodeLogsCursor(cursorRaw);
+    if (!cursor) return { error: "invalid cursor" };
+  }
+
+  const requestedLimit = Number(q.limit);
+  const limit =
+    Number.isInteger(requestedLimit) && requestedLimit > 0
+      ? Math.min(requestedLimit, MAX_LOGS_LIMIT)
+      : DEFAULT_LOGS_LIMIT;
+
+  return {
+    query: {
+      levels,
+      service: singleString(q.service),
+      environment: singleString(q.environment),
+      traceId: singleString(q.traceId),
+      search: singleString(q.q),
+      from: dates.from,
+      to: dates.to,
+      limit,
+      cursor,
+    },
+  };
+}
 
 /**
  * The one place every route resolves auth (ingest-pipeline.md §8.4): if this returns undefined,
@@ -50,8 +116,20 @@ async function requireOrg(
  * requires that exact pattern in the recognized entrypoint file, not just a helper that returns
  * an instance internally.
  */
-export function registerRoutes(app: FastifyInstance, controlDb: ControlDb): void {
-  const tenants = new TenantDbResolver(controlDb.getClient());
+export function registerRoutes(
+  app: FastifyInstance,
+  controlDb: ControlDb,
+  options: { logRetentionDays?: number } = {},
+): void {
+  const tenants = new TenantDbResolver(controlDb.getClient(), {
+    logRetentionDays: options.logRetentionDays,
+  });
+  // The Logs view loads its service/environment dropdowns on every open; computing distinct values
+  // scans the collection, so it is cached briefly per tenant database.
+  const facetsCache = new Map<
+    string,
+    { at: number; value: { services: string[]; environments: string[] } }
+  >();
 
   // Dev-friendly CORS so a locally-opened static dashboard (packages/dashboard) can call the
   // Query API directly — read-only routes only, and this is a pilot-scale internal tool, not a
@@ -98,7 +176,11 @@ export function registerRoutes(app: FastifyInstance, controlDb: ControlDb): void
     if (!org) return;
 
     const db = await tenants.forOrgDb(org.dbName);
-    await processEnvelope(db, (request.body as Buffer | undefined) ?? Buffer.alloc(0));
+    const processed = await processEnvelope(
+      db,
+      (request.body as Buffer | undefined) ?? Buffer.alloc(0),
+    );
+    if (processed.processedLogs > 0) facetsCache.delete(org.dbName); // a new service may have appeared
 
     const directives = computeDirectives(CONFIG_VERSION);
     reply.header(HEADER_SAMPLE_DIRECTIVE, JSON.stringify(directives.sample));
@@ -179,10 +261,45 @@ export function registerRoutes(app: FastifyInstance, controlDb: ControlDb): void
       await reply.send({ exemplars });
     },
   );
+
+  // ---- Logs (the "normal logs" half of the product; see packages/types/src/log.ts) -----------
+
+  // Newest first. Filters: level (comma list), service, environment, traceId, q (substring),
+  // from/to (ISO), limit, cursor. Same auth-before-tenant ordering as every other route.
+  app.get<{ Querystring: Record<string, unknown> }>("/logs", async (request, reply) => {
+    const org = await requireOrg(request, reply, controlDb);
+    if (!org) return;
+
+    const parsed = parseLogQuery(request.query);
+    if ("error" in parsed) {
+      await reply.code(400).send({ error: parsed.error });
+      return;
+    }
+
+    const db = await tenants.forOrgDb(org.dbName);
+    const page = await queryLogs(db, parsed.query);
+    await reply.send({ logs: page.logs, nextCursor: page.nextCursor });
+  });
+
+  // Distinct services/environments for the dashboard's filter dropdowns.
+  app.get("/logs/facets", async (request, reply) => {
+    const org = await requireOrg(request, reply, controlDb);
+    if (!org) return;
+
+    const cached = facetsCache.get(org.dbName);
+    if (cached && Date.now() - cached.at < FACETS_CACHE_MS) {
+      await reply.send(cached.value);
+      return;
+    }
+    const db = await tenants.forOrgDb(org.dbName);
+    const value = await getLogFacets(db);
+    facetsCache.set(org.dbName, { at: Date.now(), value });
+    await reply.send(value);
+  });
 }
 
 export function buildServer(config: BackendConfig, controlDb: ControlDb): FastifyInstance {
   const app = Fastify({ bodyLimit: config.ingestMaxBodyBytes });
-  registerRoutes(app, controlDb);
+  registerRoutes(app, controlDb, { logRetentionDays: config.logRetentionDays });
   return app;
 }

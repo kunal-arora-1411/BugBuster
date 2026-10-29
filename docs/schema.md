@@ -98,6 +98,53 @@ deploys:
 The raw material for git correlation (`doc.md` §8) — not yet wired into the Query API or an AI
 layer; that's future scope, not v1.
 
+## `logs` collection
+
+One document per application log line. **Never folded** — the opposite of `issues`: for logs the
+individual line, and its place in time, is the record.
+
+```text
+logs:
+  logId       string, UNIQUE INDEX        <- time-sortable: 12 hex epoch-ms + 6 hex sequence + 8 hex random
+  timestamp   Date                        <- when it HAPPENED (the app's clock); what users filter/sort by
+  receivedAt  Date, TTL INDEX             <- when WE stored it (our clock); what retention expires on
+  level       debug | info | warn | error
+  message     string                      <- capped at 8 KB
+  fields?     object                      <- structured context; keys sanitized; capped at 16 KB
+  trace?      { traceId, spanId? }        <- links the line to the request (and to an issue's exemplars)
+  service     { name, version, environment }
+```
+
+Both times are real BSON `Date`s (unlike the ISO strings elsewhere) because TTL indexes require it.
+
+**Why two timestamps.** Retention must trust only our own clock. Expiring on `timestamp` would let a
+client with a wrong clock write a line dated in the far future that is never deleted, or one dated
+long ago that is deleted instantly. A far-future client timestamp (> 5 min ahead) is also replaced
+with `receivedAt` at ingest so it cannot sit at the top of every view.
+
+**Indexes** — each exists for a specific query:
+
+| Index | Serves |
+|---|---|
+| `logId` (unique) | Idempotent ingest: a retried batch cannot duplicate lines. |
+| `(timestamp -1, logId -1)` | The default view and cursor pagination (`logId` breaks ties within a millisecond). |
+| `(service.name, timestamp -1, logId -1)` | "Only `billing-svc`" with the sort served by the index, no in-memory sort. |
+| `(trace.traceId, timestamp -1, logId -1)` (partial) | "Everything this request did". Partial so lines with no trace don't bloat it. |
+| `receivedAt` TTL (`receivedAt_ttl`) | Retention (default 7 days). |
+
+There is deliberately **no index on `level` or `message`**: level filters ride the time range, and
+message search is a bounded case-insensitive substring scan over that range. A MongoDB text index
+only matches whole stemmed words — not what anyone searching logs for `o_1042` or `ECONNRESET 10.0.3`
+wants.
+
+**Retention is a setting, not a migration.** The TTL is applied when a tenant database is first
+used after a process start; changing `BUGBUSTER_LOG_RETENTION_DAYS` updates the existing index in
+place (`collMod`), and `0` removes the TTL index entirely.
+
+**Scale note.** Every line is a document carrying several indexes. That is comfortable at the
+volumes this project targets; if you reach the point where log ingest rather than error ingest
+dominates the database, that is the signal (`ingest-pipeline.md` §10) to give logs their own store.
+
 ## What's deliberately NOT here yet
 
 Per `ingest-pipeline.md` §10's growth triggers: no durable log (writes go directly from the ingest

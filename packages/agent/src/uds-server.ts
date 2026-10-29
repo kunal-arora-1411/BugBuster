@@ -7,19 +7,39 @@ import type {
   FoldDelta,
   Priority,
 } from "@bugbusterhq/types";
-import { decodeEnvelopeItems, encodeEnvelope } from "@bugbusterhq/types";
+import { decodeEnvelopeItems, encodeEnvelope, splitIntoBatches } from "@bugbusterhq/types";
 import { mergeFoldDeltas } from "./merge-fold-deltas.js";
-import { buildOutgoingEnvelope, type PrioritizedExemplar } from "./build-outgoing-envelope.js";
+import {
+  buildOutgoingEnvelope,
+  type PrioritizedExemplar,
+  type PrioritizedLog,
+} from "./build-outgoing-envelope.js";
 import type { AgentHttpClient } from "./http-client.js";
 import type { DiskSpool } from "./spool.js";
 
 const AGENT_VERSION = "0.0.0";
+
+// Logs are the first item type whose volume is not bounded by fingerprint cardinality, so the
+// Agent — a long-lived daemon every service on the host funnels through — must bound them itself.
+const DEFAULT_MAX_PENDING_LOGS = 50_000;
+const DEFAULT_MAX_BATCH_BYTES = 512 * 1024; // matches the SDK's flushMaxBatchBytes default
+// Priority >= this is warn/error (or higher): kept past the soft cap, up to HARD_CAP_FACTOR x.
+const KEEP_PRIORITY = 3;
+const HARD_CAP_FACTOR = 2;
 
 export interface UdsServerOptions {
   socketPath: string;
   httpClient: AgentHttpClient;
   spool?: DiskSpool;
   flushIntervalMs?: number;
+  /**
+   * Soft cap on log lines held between flushes (default 50,000). Past it, debug/info lines are
+   * shed first; warn/error lines are kept until twice the cap. Every shed line is counted into the
+   * drop counters sent upstream — never silently lost.
+   */
+  maxPendingLogs?: number;
+  /** Max serialized size of log lines per outbound request (default 512 KB, pre-compression). */
+  maxBatchBytes?: number;
 }
 
 /**
@@ -33,6 +53,8 @@ export class UdsServer {
   private pendingFolds: { priority: Priority; payload: FoldDelta }[] = [];
   private pendingExemplars: PrioritizedExemplar[] = [];
   private pendingMeta: DropCounters[] = [];
+  private pendingLogs: PrioritizedLog[] = [];
+  private droppedLogs = 0;
   private timer?: NodeJS.Timeout;
 
   constructor(private readonly options: UdsServerOptions) {
@@ -60,10 +82,27 @@ export class UdsServer {
           priority: item.priority,
           payload: item.payload as BugBusterEvent,
         });
+      } else if (item.type === "log") {
+        this.acceptLog({ priority: item.priority, payload: item.payload });
       } else if (item.type === "meta") {
         this.pendingMeta.push(item.payload);
       }
     }
+  }
+
+  /**
+   * Priority-aware admission (the shed ladder, ingest-pipeline.md §8.2, applied at the Agent):
+   * under a flood, chatter (debug 0, info 1) is refused once the soft cap is hit, while warn/error
+   * (priority 3) are still admitted up to a hard cap. Refusals are counted, not hidden.
+   */
+  private acceptLog(log: PrioritizedLog): void {
+    const softCap = this.options.maxPendingLogs ?? DEFAULT_MAX_PENDING_LOGS;
+    const cap = log.priority >= KEEP_PRIORITY ? softCap * HARD_CAP_FACTOR : softCap;
+    if (this.pendingLogs.length >= cap) {
+      this.droppedLogs++;
+      return;
+    }
+    this.pendingLogs.push(log);
   }
 
   async start(): Promise<void> {
@@ -95,7 +134,14 @@ export class UdsServer {
       }
     }
 
-    if (this.pendingFolds.length === 0 && this.pendingExemplars.length === 0) return;
+    if (
+      this.pendingFolds.length === 0 &&
+      this.pendingExemplars.length === 0 &&
+      this.pendingLogs.length === 0 &&
+      this.droppedLogs === 0
+    ) {
+      return;
+    }
 
     const foldPriorityByFingerprint = new Map<string, Priority>();
     for (const { priority, payload } of this.pendingFolds) {
@@ -106,25 +152,66 @@ export class UdsServer {
     }
 
     const merged = mergeFoldDeltas(this.pendingFolds.map((f) => f.payload));
-    const envelope = buildOutgoingEnvelope({
-      mergedFolds: merged,
-      foldPriorityByFingerprint,
-      exemplars: this.pendingExemplars,
-      meta: this.pendingMeta,
-      agentVersion: AGENT_VERSION,
-    });
-    const payload = encodeEnvelope(envelope);
+
+    // Report shed log lines upstream in the same drop-counter channel the SDK uses.
+    const meta = [...this.pendingMeta];
+    if (this.droppedLogs > 0) {
+      meta.push({
+        droppedBufferFull: this.droppedLogs,
+        droppedQuota: 0,
+        sampledOut: 0,
+        bufferHighWaterBytes: 0,
+        selfCpuPct: 0,
+        configVersion: 0,
+      });
+    }
+
+    // Bound every outbound POST: the backend rejects an over-limit body whole (413). The error
+    // path (folds/exemplars/meta) rides in the first envelope with the first batch of logs.
+    const [firstLogs = [], ...remainingLogBatches] = splitIntoBatches(
+      this.pendingLogs,
+      this.options.maxBatchBytes ?? DEFAULT_MAX_BATCH_BYTES,
+    );
+
+    const payloads: Buffer[] = [
+      encodeEnvelope(
+        buildOutgoingEnvelope({
+          mergedFolds: merged,
+          foldPriorityByFingerprint,
+          exemplars: this.pendingExemplars,
+          meta,
+          agentVersion: AGENT_VERSION,
+          logs: firstLogs,
+        }),
+      ),
+      ...remainingLogBatches.map((batch) =>
+        encodeEnvelope(
+          buildOutgoingEnvelope({
+            mergedFolds: [],
+            foldPriorityByFingerprint: new Map(),
+            exemplars: [],
+            meta: [],
+            agentVersion: AGENT_VERSION,
+            logs: batch,
+          }),
+        ),
+      ),
+    ];
 
     this.pendingFolds = [];
     this.pendingExemplars = [];
     this.pendingMeta = [];
+    this.pendingLogs = [];
+    this.droppedLogs = 0;
 
-    try {
-      await this.options.httpClient.send(payload);
-    } catch {
-      if (this.options.spool) await this.options.spool.write(payload);
-      // no spool configured: batch is lost, matching the SDK's own documented behavior when its
-      // transport fails — a counted drop, not a crash.
+    for (const payload of payloads) {
+      try {
+        await this.options.httpClient.send(payload);
+      } catch {
+        if (this.options.spool) await this.options.spool.write(payload);
+        // no spool configured: batch is lost, matching the SDK's own documented behavior when its
+        // transport fails — a counted drop, not a crash.
+      }
     }
   }
 }

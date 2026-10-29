@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BugBuster — Issues</title>
+<title>BugBuster</title>
 <style>
   :root {
     color-scheme: light dark;
@@ -174,54 +174,190 @@
     padding: 10px 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; font-size: 11.5px;
   }
   .empty-note { color: var(--text-faint); font-size: 12.5px; font-style: italic; }
+
+  /* ---- view tabs ---- */
+  .tabs { display: flex; gap: 4px; margin: 0 0 14px; border-bottom: 1px solid var(--border); }
+  .tabs button {
+    border: none; border-bottom: 2px solid transparent; border-radius: 0; background: transparent;
+    padding: 9px 14px; margin-bottom: -1px; color: var(--text-muted); font-weight: 600;
+  }
+  .tabs button:hover { background: transparent; color: var(--text); }
+  .tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+  button:focus-visible, input:focus-visible, select:focus-visible, .log-row:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+  }
+
+  /* ---- logs ---- */
+  :root {
+    --lvl-debug: var(--text-faint); --lvl-info: var(--accent);
+    --lvl-warn: var(--warning);     --lvl-error: var(--danger);
+    --lvl-error-weak: #fdecec;
+  }
+  @media (prefers-color-scheme: dark) { :root { --lvl-error-weak: #3a1717; } }
+
+  .logs-toolbar { gap: 8px; }
+  #logQ { flex: 1 1 220px; min-width: 160px; }
+  .level-chips { display: flex; gap: 4px; }
+  .level-chips button {
+    padding: 6px 10px; font-size: 12px; font-weight: 600; border-radius: 999px;
+    color: var(--text-faint); background: transparent;
+  }
+  .level-chips button[aria-pressed="true"] { color: var(--text); background: var(--bg); }
+  .level-chips button[aria-pressed="true"][data-level="debug"] { border-color: var(--lvl-debug); }
+  .level-chips button[aria-pressed="true"][data-level="info"]  { border-color: var(--lvl-info);  color: var(--lvl-info); }
+  .level-chips button[aria-pressed="true"][data-level="warn"]  { border-color: var(--lvl-warn);  color: var(--lvl-warn); }
+  .level-chips button[aria-pressed="true"][data-level="error"] { border-color: var(--lvl-error); color: var(--lvl-error); }
+  .trace-chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; border-radius: 999px;
+    background: var(--accent-weak); color: var(--accent); font-size: 12px; max-width: 320px;
+  }
+  .trace-chip[hidden] { display: none; } /* an author `display` rule would otherwise beat the hidden attribute */
+  .trace-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
+  .trace-chip button { padding: 0 6px; border: none; background: transparent; color: inherit; font-size: 13px; line-height: 1.4; }
+  .grow { flex: 1 1 auto; }
+  #tailBtn[aria-pressed="true"] { border-color: var(--success); color: var(--success); background: var(--success-weak); }
+  .live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); margin-right: 7px; }
+  #tailBtn[aria-pressed="true"] .live-dot { background: var(--success); animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.25; } }
+  @media (prefers-reduced-motion: reduce) { #tailBtn[aria-pressed="true"] .live-dot { animation: none; } }
+
+  #logsStatus { color: var(--text-muted); font-size: 12.5px; margin: 2px 2px 14px; min-height: 16px; }
+  #logsStatus.err { color: var(--danger); }
+
+  #logsList { font-size: 12.5px; }
+  .log-row {
+    display: grid; grid-template-columns: 118px 52px 120px 1fr; gap: 10px; align-items: baseline;
+    padding: 7px 12px; border-bottom: 1px solid var(--border); border-left: 3px solid transparent;
+    cursor: pointer;
+  }
+  .log-row:hover { background: var(--row-hover); }
+  .log-row.open { background: var(--accent-weak); }
+  .log-row.lvl-debug { border-left-color: var(--lvl-debug); }
+  .log-row.lvl-info  { border-left-color: transparent; }
+  .log-row.lvl-warn  { border-left-color: var(--lvl-warn); }
+  .log-row.lvl-error { border-left-color: var(--lvl-error); background: var(--lvl-error-weak); }
+  .log-row.lvl-error:hover { filter: brightness(0.98); }
+  .log-time { font-family: var(--mono); font-size: 12px; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .log-level { font-family: var(--mono); font-size: 11.5px; font-weight: 700; }
+  .lvl-debug .log-level { color: var(--lvl-debug); }
+  .lvl-info  .log-level { color: var(--lvl-info); }
+  .lvl-warn  .log-level { color: var(--lvl-warn); }
+  .lvl-error .log-level { color: var(--lvl-error); }
+  .log-svc { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .log-msg {
+    font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; white-space: pre-wrap;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .log-row.open .log-msg { display: block; }
+  .log-detail { padding: 12px 14px 14px 15px; border-bottom: 1px solid var(--border); background: var(--bg); }
+  .log-detail pre.full {
+    margin: 0 0 12px; padding: 10px 12px; background: var(--bg-elevated); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto;
+  }
+  .log-detail h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin: 14px 0 8px; }
+  .field-table { width: 100%; font-size: 12px; }
+  .field-table td { padding: 4px 10px 4px 0; border: none; vertical-align: top; }
+  .field-table td:first-child { color: var(--text-muted); font-family: var(--mono); white-space: nowrap; width: 1%; }
+  .field-table td:last-child { font-family: var(--mono); overflow-wrap: anywhere; white-space: pre-wrap; }
+  .detail-actions { display: flex; gap: 6px; margin-top: 14px; }
+  #logsEmpty { color: var(--text-muted); padding: 44px 16px; text-align: center; display: none; }
+  #logsMoreBtn { display: none; margin: 14px auto 0; }
+  button.link-btn { font-size: 12px; padding: 3px 8px; }
+
+  @media (max-width: 640px) {
+    .log-row { grid-template-columns: auto auto 1fr; row-gap: 3px; }
+    .log-msg { grid-column: 1 / -1; }
+  }
 </style>
 </head>
 <body>
   <h1>BugBuster</h1>
-  <p class="sub">Read-only issue viewer against the Query API — no settings, no auth flow, just "can I see my org's issues, and one of them in full." See docs/api.md for what this calls.</p>
+  <p class="sub">Read-only viewer against the Query API — your org's grouped errors, and the application logs around them. See docs/api.md for what this calls.</p>
 
   <div class="panel toolbar">
     <input id="backendUrl" placeholder="Backend URL (e.g. http://localhost:8080)" />
     <input id="apiKey" placeholder="API key" type="password" />
-    <button id="loadBtn" class="primary">Load issues</button>
-    <div class="spacer"></div>
-    <div class="filters">
-      <input id="search" placeholder="Filter by fingerprint or release…" />
-      <select id="fidelityFilter">
-        <option value="all">All fidelity</option>
-        <option value="exact">Exact only</option>
-        <option value="sampled">Sampled only</option>
-      </select>
+    <button id="loadBtn" class="primary">Load</button>
+  </div>
+
+  <div class="tabs" role="tablist" aria-label="View">
+    <button role="tab" id="tab-issues" data-view="issues" aria-selected="true">Issues</button>
+    <button role="tab" id="tab-logs" data-view="logs" aria-selected="false">Logs</button>
+  </div>
+
+  <section id="view-issues" role="tabpanel" aria-labelledby="tab-issues">
+    <div class="panel toolbar">
+      <div class="filters">
+        <input id="search" placeholder="Filter by fingerprint or release…" />
+        <select id="fidelityFilter">
+          <option value="all">All fidelity</option>
+          <option value="exact">Exact only</option>
+          <option value="sampled">Sampled only</option>
+        </select>
+      </div>
     </div>
-  </div>
-  <div id="status"></div>
+    <div id="status"></div>
 
-  <div class="stats" id="stats" style="display:none">
-    <div class="panel stat"><div class="n" id="statTotal">0</div><div class="l">Issues loaded</div></div>
-    <div class="panel stat"><div class="n" id="statOccurrences">0</div><div class="l">Total occurrences</div></div>
-    <div class="panel stat warn"><div class="n" id="statSampled">0</div><div class="l">Sampled / degraded</div></div>
-  </div>
+    <div class="stats" id="stats" style="display:none">
+      <div class="panel stat"><div class="n" id="statTotal">0</div><div class="l">Issues loaded</div></div>
+      <div class="panel stat"><div class="n" id="statOccurrences">0</div><div class="l">Total occurrences</div></div>
+      <div class="panel stat warn"><div class="n" id="statSampled">0</div><div class="l">Sampled / degraded</div></div>
+    </div>
 
-  <div id="empty" class="panel">No issues yet.</div>
+    <div id="empty" class="panel">No issues yet.</div>
 
-  <div class="panel" style="overflow:auto">
-    <table id="issuesTable" style="display:none">
-      <thead>
-        <tr>
-          <th data-key="fingerprint">Fingerprint <span class="arrow">▾</span></th>
-          <th data-key="count">Count <span class="arrow">▾</span></th>
-          <th data-key="usersAffected">Users <span class="arrow">▾</span></th>
-          <th data-key="releases">Releases <span class="arrow">▾</span></th>
-          <th data-key="lastSeen" class="active">Last seen (IST) <span class="arrow">▾</span></th>
-          <th data-key="fidelity">Fidelity <span class="arrow">▾</span></th>
-        </tr>
-      </thead>
-      <tbody id="issuesBody"></tbody>
-    </table>
-  </div>
-  <div class="center"><button id="loadMoreBtn">Load more</button></div>
+    <div class="panel" style="overflow:auto">
+      <table id="issuesTable" style="display:none">
+        <thead>
+          <tr>
+            <th data-key="fingerprint">Fingerprint <span class="arrow">▾</span></th>
+            <th data-key="count">Count <span class="arrow">▾</span></th>
+            <th data-key="usersAffected">Users <span class="arrow">▾</span></th>
+            <th data-key="releases">Releases <span class="arrow">▾</span></th>
+            <th data-key="lastSeen" class="active">Last seen (IST) <span class="arrow">▾</span></th>
+            <th data-key="fidelity">Fidelity <span class="arrow">▾</span></th>
+          </tr>
+        </thead>
+        <tbody id="issuesBody"></tbody>
+      </table>
+    </div>
+    <div class="center"><button id="loadMoreBtn">Load more</button></div>
 
-  <div id="detail" class="panel"></div>
+    <div id="detail" class="panel"></div>
+  </section>
+
+  <section id="view-logs" role="tabpanel" aria-labelledby="tab-logs" style="display:none">
+    <div class="panel toolbar logs-toolbar">
+      <input id="logQ" placeholder="Search log messages…" aria-label="Search log messages" />
+      <select id="logRange" aria-label="Time range">
+        <option value="15">Last 15 minutes</option>
+        <option value="60" selected>Last hour</option>
+        <option value="360">Last 6 hours</option>
+        <option value="1440">Last 24 hours</option>
+        <option value="10080">Last 7 days</option>
+        <option value="0">All retained</option>
+      </select>
+      <select id="logService" aria-label="Service"><option value="">All services</option></select>
+      <select id="logEnv" aria-label="Environment"><option value="">All environments</option></select>
+      <div class="spacer"></div>
+      <div class="level-chips" id="levelChips" role="group" aria-label="Levels">
+        <button data-level="debug" aria-pressed="true">debug</button>
+        <button data-level="info" aria-pressed="true">info</button>
+        <button data-level="warn" aria-pressed="true">warn</button>
+        <button data-level="error" aria-pressed="true">error</button>
+      </div>
+      <span id="traceChip" class="trace-chip" hidden><span id="traceChipText"></span><button id="traceChipClear" aria-label="Clear trace filter">✕</button></span>
+      <div class="grow"></div>
+      <button id="tailBtn" aria-pressed="false" title="Poll for new lines every few seconds"><span class="live-dot"></span>Live</button>
+      <button id="logsRefreshBtn">Refresh</button>
+    </div>
+    <div id="logsStatus"></div>
+    <div class="panel" style="overflow:hidden">
+      <div id="logsList" role="log" aria-live="off"></div>
+      <div id="logsEmpty"></div>
+    </div>
+    <div class="center"><button id="logsMoreBtn">Load older</button></div>
+  </section>
 
 <script>
   const $ = (id) => document.getElementById(id);
@@ -470,6 +606,9 @@
           `<span class="role-badge">${escapeHtml(ev.exemplarRole)}</span>` +
           `<span class="exemplar-meta">${escapeHtml(formatIST(ev.timestamp))}</span>` +
           `<span class="exemplar-meta mono">trace ${escapeHtml(ev.trace ? ev.trace.traceId : "?")}</span>` +
+          (ev.trace && ev.trace.traceId
+            ? `<button class="ghost link-btn" data-trace-logs="${escapeHtml(ev.trace.traceId)}">View logs for this request →</button>`
+            : "") +
         `</div>` +
         (source ? `<div class="exemplar-source">${escapeHtml(source)}</div>` : "") +
         `<div class="exemplar-message"><strong>${escapeHtml(errType || "")}:</strong> ${escapeHtml(message)}</div>` +
@@ -479,6 +618,9 @@
             <pre id="${stackId}">${escapeHtml(stacktrace)}</pre>
           </div>` : "");
       container.appendChild(div);
+    });
+    container.querySelectorAll("[data-trace-logs]").forEach(btn => {
+      btn.addEventListener("click", () => openLogsForTrace(btn.dataset.traceLogs));
     });
     container.querySelectorAll("[data-copy-target]").forEach(btn => {
       btn.addEventListener("click", () => {
@@ -526,9 +668,347 @@
   });
   $("search").addEventListener("input", renderAll);
   $("fidelityFilter").addEventListener("change", renderAll);
-  $("loadBtn").addEventListener("click", () => loadIssues(false));
   $("loadMoreBtn").addEventListener("click", () => loadIssues(true));
-  if ($("apiKey").value) loadIssues(false);
+</script>
+
+<script>
+  /* =====================================================================================
+     Views (Issues | Logs) and the Logs viewer.
+     Everything that comes off the wire is untrusted text (a log line can contain anything),
+     so log content is only ever inserted with textContent — never as HTML.
+     ===================================================================================== */
+  const LEVELS = ["debug", "info", "warn", "error"];
+  const MAX_LINES = 2000;        // in-memory cap while tailing
+  const TAIL_INTERVAL_MS = 3000;
+  const TAIL_LOOKBACK_MS = 15000; // re-fetch a little history each poll: lines arrive out of order
+
+  let currentView = "issues";
+  let logs = [];                 // newest first
+  let seenLogIds = new Set();
+  let logsNextCursor;
+  let logsTrimmed = false;
+  let logsReqSeq = 0;            // discards a slow response that a newer filter change has overtaken
+  let openLogId = null;
+  let tailTimer = null;
+  let tailBusy = false;
+  const selectedLevels = new Set(LEVELS);
+  let traceFilter = "";
+  let facetsLoadedFor = "";
+  let issuesRequested = false;   // has the Issues view fetched yet (it loads lazily when first shown)
+
+  const conn = () => ({ url: $("backendUrl").value.replace(/\/$/, ""), key: $("apiKey").value });
+
+  function setView(view, opts) {
+    currentView = view;
+    for (const v of ["issues", "logs"]) {
+      $("view-" + v).style.display = v === view ? "" : "none";
+      $("tab-" + v).setAttribute("aria-selected", String(v === view));
+    }
+    if (!opts || !opts.keepHash) history.replaceState(null, "", "#" + view);
+    if (view === "logs") {
+      if (logs.length === 0 && $("apiKey").value) { loadFacets(); loadLogs(false); }
+    } else {
+      stopTail();
+      // Opening the page straight at #logs never loaded issues; do it the first time they're shown.
+      if (!issuesRequested && $("apiKey").value) { issuesRequested = true; loadIssues(false); }
+    }
+  }
+
+  function connect() {
+    if (currentView === "logs") { facetsLoadedFor = ""; loadFacets(); loadLogs(false); }
+    else { issuesRequested = true; loadIssues(false); }
+  }
+
+  /* ---------- logs: fetching ---------- */
+
+  function logQueryParams(extra) {
+    const p = new URLSearchParams();
+    if (selectedLevels.size > 0 && selectedLevels.size < LEVELS.length) p.set("level", [...selectedLevels].join(","));
+    const q = $("logQ").value.trim();
+    if (q) p.set("q", q);
+    if ($("logService").value) p.set("service", $("logService").value);
+    if ($("logEnv").value) p.set("environment", $("logEnv").value);
+    if (traceFilter) p.set("traceId", traceFilter);
+    for (const [k, v] of Object.entries(extra || {})) if (v !== undefined && v !== "") p.set(k, v);
+    return p;
+  }
+
+  function rangeFromIso() {
+    const minutes = Number($("logRange").value);
+    return minutes > 0 ? new Date(Date.now() - minutes * 60000).toISOString() : undefined;
+  }
+
+  function setLogsStatus(text, isError) {
+    $("logsStatus").textContent = text;
+    $("logsStatus").className = isError ? "err" : "";
+  }
+
+  async function fetchLogs(params) {
+    const { url, key } = conn();
+    const res = await fetch(url + "/logs?" + params.toString(), { headers: { Authorization: "Bearer " + key } });
+    if (!res.ok) {
+      let detail = "";
+      try { detail = (await res.json()).error || ""; } catch (_) {}
+      throw new Error("HTTP " + res.status + (detail ? " — " + detail : res.status === 401 ? " (check API key)" : ""));
+    }
+    return res.json();
+  }
+
+  async function loadLogs(append) {
+    const seq = ++logsReqSeq;
+    const { url, key } = conn();
+    localStorage.setItem("bb_backend_url", url);
+    localStorage.setItem("bb_api_key", key);
+    setLogsStatus("Loading…");
+    try {
+      const params = append
+        ? logQueryParams({ cursor: logsNextCursor, limit: 200 })
+        : logQueryParams({ from: rangeFromIso(), limit: 200 });
+      if (append && rangeFromIso()) params.set("from", rangeFromIso());
+      const data = await fetchLogs(params);
+      if (seq !== logsReqSeq) return;     // a newer request superseded this one
+      const incoming = data.logs || [];
+      if (!append) { logs = []; seenLogIds = new Set(); openLogId = null; logsTrimmed = false; }
+      for (const l of incoming) if (!seenLogIds.has(l.logId)) { seenLogIds.add(l.logId); logs.push(l); }
+      logsNextCursor = data.nextCursor;
+      renderLogs();
+      setLogsStatus(logsSummary());
+    } catch (err) {
+      if (seq !== logsReqSeq) return;
+      setLogsStatus("Request failed: " + err.message, true);
+    }
+  }
+
+  function logsSummary() {
+    const errors = logs.filter(l => l.level === "error").length;
+    const warns = logs.filter(l => l.level === "warn").length;
+    let t = logs.length + " line" + (logs.length === 1 ? "" : "s") + " loaded";
+    if (logs.length) t += " · " + errors + " error" + (errors === 1 ? "" : "s") + " · " + warns + " warning" + (warns === 1 ? "" : "s");
+    if (logsNextCursor && !logsTrimmed) t += " · older lines available";
+    if (logsTrimmed) t += " · oldest lines trimmed while live — turn Live off to browse history";
+    return t + " · times in IST";
+  }
+
+  async function loadFacets() {
+    const { url, key } = conn();
+    if (!key || facetsLoadedFor === url + key) return;
+    try {
+      const res = await fetch(url + "/logs/facets", { headers: { Authorization: "Bearer " + key } });
+      if (!res.ok) return;
+      const f = await res.json();
+      fillSelect($("logService"), "All services", f.services || []);
+      fillSelect($("logEnv"), "All environments", f.environments || []);
+      facetsLoadedFor = url + key;
+    } catch (_) { /* filters simply stay at "All" */ }
+  }
+
+  function fillSelect(el, allLabel, values) {
+    const keep = el.value;
+    el.textContent = "";
+    const all = document.createElement("option");
+    all.value = ""; all.textContent = allLabel;
+    el.appendChild(all);
+    for (const v of values) {
+      const o = document.createElement("option");
+      o.value = v; o.textContent = v;
+      el.appendChild(o);
+    }
+    el.value = values.includes(keep) ? keep : "";
+  }
+
+  /* ---------- logs: live tail ---------- */
+
+  function startTail() {
+    $("tailBtn").setAttribute("aria-pressed", "true");
+    if (tailTimer) clearInterval(tailTimer);
+    tailTimer = setInterval(tailTick, TAIL_INTERVAL_MS);
+    tailTick();
+  }
+  function stopTail() {
+    $("tailBtn").setAttribute("aria-pressed", "false");
+    if (tailTimer) clearInterval(tailTimer);
+    tailTimer = null;
+  }
+
+  async function tailTick() {
+    if (tailBusy || document.hidden || currentView !== "logs") return;
+    tailBusy = true;
+    const seq = logsReqSeq;
+    try {
+      const newest = logs.length ? Date.parse(logs[0].timestamp) : Date.now() - 60000;
+      const params = logQueryParams({ from: new Date(newest - TAIL_LOOKBACK_MS).toISOString(), limit: 500 });
+      const data = await fetchLogs(params);
+      if (seq !== logsReqSeq) return;     // filters changed mid-flight; the reload owns the list now
+      const fresh = (data.logs || []).filter(l => !seenLogIds.has(l.logId));
+      if (fresh.length === 0) return;
+      for (const l of fresh) seenLogIds.add(l.logId);
+      logs = fresh.concat(logs).sort(compareLogsDesc);
+      if (logs.length > MAX_LINES) {
+        for (const dropped of logs.slice(MAX_LINES)) seenLogIds.delete(dropped.logId);
+        logs = logs.slice(0, MAX_LINES);
+        logsTrimmed = true;               // the "older" cursor no longer lines up with what we hold
+      }
+      renderLogs();
+      setLogsStatus(logsSummary());
+    } catch (err) {
+      setLogsStatus("Live update failed: " + err.message, true);
+    } finally {
+      tailBusy = false;
+    }
+  }
+
+  function compareLogsDesc(a, b) {
+    if (a.timestamp !== b.timestamp) return a.timestamp < b.timestamp ? 1 : -1;
+    return a.logId < b.logId ? 1 : a.logId > b.logId ? -1 : 0;
+  }
+
+  /* ---------- logs: rendering ---------- */
+
+  function istParts(iso) {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return null;
+    const ist = new Date(d.getTime() + (5 * 60 + 30) * 60 * 1000);
+    const pad = (n, w) => String(n).padStart(w || 2, "0");
+    return {
+      date: ist.getUTCFullYear() + "-" + pad(ist.getUTCMonth() + 1) + "-" + pad(ist.getUTCDate()),
+      time: pad(ist.getUTCHours()) + ":" + pad(ist.getUTCMinutes()) + ":" + pad(ist.getUTCSeconds()) + "." + pad(ist.getUTCMilliseconds(), 3),
+    };
+  }
+
+  function el(tag, className, text) {
+    const e = document.createElement(tag);
+    if (className) e.className = className;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  function renderLogs() {
+    const list = $("logsList");
+    list.textContent = "";
+    const empty = $("logsEmpty");
+    if (logs.length === 0) {
+      empty.style.display = "block";
+      const filtered = $("logQ").value.trim() || $("logService").value || $("logEnv").value || traceFilter || selectedLevels.size < LEVELS.length;
+      empty.textContent = traceFilter
+        ? "No log lines recorded for this trace. (Logs are only linked to a request when the app uses the Express integration's requestHandler.)"
+        : filtered ? "No log lines match these filters."
+        : "No log lines in this time range yet. Send some with client.log.info(\"hello\") — see docs/api.md.";
+    } else {
+      empty.style.display = "none";
+    }
+
+    const today = istParts(new Date().toISOString());
+    const frag = document.createDocumentFragment();
+    for (const l of logs) {
+      const t = istParts(l.timestamp);
+      const row = el("div", "log-row lvl-" + l.level + (l.logId === openLogId ? " open" : ""));
+      row.tabIndex = 0;
+      row.setAttribute("role", "button");
+      row.setAttribute("aria-expanded", String(l.logId === openLogId));
+      row.appendChild(el("span", "log-time", t ? (t.date === today.date ? t.time : t.date.slice(5) + " " + t.time) : l.timestamp));
+      row.appendChild(el("span", "log-level", l.level));
+      row.appendChild(el("span", "log-svc", l.service ? l.service.name : ""));
+      row.appendChild(el("span", "log-msg", l.message));
+      const toggle = () => { openLogId = openLogId === l.logId ? null : l.logId; renderLogs(); };
+      row.addEventListener("click", toggle);
+      row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
+      frag.appendChild(row);
+      if (l.logId === openLogId) frag.appendChild(renderLogDetail(l));
+    }
+    list.appendChild(frag);
+    $("logsMoreBtn").style.display = logsNextCursor && !logsTrimmed ? "inline-block" : "none";
+  }
+
+  function renderLogDetail(l) {
+    const d = el("div", "log-detail");
+    d.appendChild(el("pre", "full", l.message));
+
+    const kv = el("div", "kv-grid");
+    const add = (k, v) => { const c = el("div"); c.appendChild(el("div", "k", k)); c.appendChild(el("div", "v", v)); kv.appendChild(c); };
+    const t = istParts(l.timestamp);
+    add("Time (IST)", t ? t.date + " " + t.time : l.timestamp);
+    add("Service", l.service ? l.service.name : "—");
+    add("Version", l.service ? l.service.version : "—");
+    add("Environment", l.service ? l.service.environment : "—");
+    add("Trace", l.trace ? l.trace.traceId : "none");
+    add("Log ID", l.logId);
+    d.appendChild(kv);
+
+    d.appendChild(el("h4", null, "Fields"));
+    const entries = Object.entries(l.fields || {});
+    if (entries.length === 0) {
+      d.appendChild(el("span", "empty-note", "No structured fields on this line."));
+    } else {
+      const table = el("table", "field-table");
+      for (const [k, v] of entries) {
+        const tr = el("tr");
+        tr.appendChild(el("td", null, k));
+        tr.appendChild(el("td", null, typeof v === "string" ? v : JSON.stringify(v, null, 2)));
+        table.appendChild(tr);
+      }
+      d.appendChild(table);
+    }
+
+    const actions = el("div", "detail-actions");
+    if (l.trace && l.trace.traceId) {
+      const b = el("button", null, "Show everything in this request");
+      b.addEventListener("click", (e) => { e.stopPropagation(); openLogsForTrace(l.trace.traceId); });
+      actions.appendChild(b);
+    }
+    const copy = el("button", null, "Copy JSON");
+    copy.addEventListener("click", (e) => { e.stopPropagation(); copyToClipboard(JSON.stringify(l, null, 2), copy); });
+    actions.appendChild(copy);
+    d.appendChild(actions);
+    return d;
+  }
+
+  /* ---------- logs: filters and navigation ---------- */
+
+  function setTraceFilter(traceId) {
+    traceFilter = traceId || "";
+    $("traceChip").hidden = !traceFilter;
+    $("traceChipText").textContent = traceFilter ? "trace " + traceFilter : "";
+  }
+
+  // The jump from an error to everything that request logged. Trace ids can be old, so the time
+  // range is widened to everything retained — the trace id itself is the narrowing filter.
+  function openLogsForTrace(traceId) {
+    setTraceFilter(traceId);
+    $("logRange").value = "0";
+    setView("logs", { keepHash: false });
+    loadFacets();
+    loadLogs(false);
+  }
+
+  function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+  const reloadLogs = () => loadLogs(false);
+
+  document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => setView(b.dataset.view)));
+  $("loadBtn").addEventListener("click", connect);
+  $("logQ").addEventListener("input", debounce(reloadLogs, 300));
+  for (const id of ["logRange", "logService", "logEnv"]) $(id).addEventListener("change", reloadLogs);
+  $("logsRefreshBtn").addEventListener("click", reloadLogs);
+  $("logsMoreBtn").addEventListener("click", () => loadLogs(true));
+  $("tailBtn").addEventListener("click", () => ($("tailBtn").getAttribute("aria-pressed") === "true" ? stopTail() : startTail()));
+  $("traceChipClear").addEventListener("click", () => { setTraceFilter(""); reloadLogs(); });
+  document.querySelectorAll("#levelChips button").forEach(b => b.addEventListener("click", () => {
+    const lvl = b.dataset.level;
+    if (selectedLevels.has(lvl)) { if (selectedLevels.size === 1) return; selectedLevels.delete(lvl); }
+    else selectedLevels.add(lvl);
+    b.setAttribute("aria-pressed", String(selectedLevels.has(lvl)));
+    reloadLogs();
+  }));
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && tailTimer) tailTick(); });
+
+  // Startup: honor #logs / #issues so a view is linkable, then load whichever is showing.
+  (function init() {
+    const wanted = location.hash === "#logs" ? "logs" : "issues";
+    if ($("apiKey").value) {
+      setView(wanted, { keepHash: true }); // loads whichever view is showing
+    } else if (wanted === "logs") {
+      setView("logs", { keepHash: true });
+    }
+  })();
 </script>
 </body>
 </html>

@@ -69,7 +69,21 @@ curl http://localhost:3000/throw   # again — should fold into the same issue, 
 curl -H "Authorization: Bearer demo-api-key" http://localhost:8080/issues
 ```
 
+## 8. Send and read logs
+
+The demo app already logs. Generate some and read them back:
+
+```bash
+curl http://localhost:3000/orders/42
+curl http://localhost:3000/checkout        # fails: an error + the log lines leading up to it
+
+curl -H "Authorization: Bearer demo-api-key" "http://localhost:8080/logs?limit=10"
+curl -H "Authorization: Bearer demo-api-key" "http://localhost:8080/logs?level=error&q=payment"
+```
+
+Set `BUGBUSTER_LOG_RETENTION_DAYS` on the backend (default 7) to control how long logs are kept.
+
 ## What's not here yet
 
-No dashboard UI — `GET /issues` above is currently the only way to see results without writing
-code against the Query API directly. See `docs/api.md` for the full response shape.
+See `docs/api.md` for the full response shapes. The dashboard (`packages/dashboard`, `pnpm dev`)
+shows both issues and logs.

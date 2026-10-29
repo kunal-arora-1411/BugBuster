@@ -1,3 +1,4 @@
+import type { LogLevel } from "@bugbusterhq/types";
 import type { BugBusterContext } from "./context.js";
 
 /**
@@ -8,12 +9,16 @@ import type { BugBusterContext } from "./context.js";
  * cost into the worker with no savings, but the *parsing* of that string into structured frames
  * still happens only in the worker (packages/sdk-node/src/worker/stack.ts).
  */
-export type CaptureKind = "exception" | "message";
+export type CaptureKind = "exception" | "message" | "log";
 
 export interface RawCapture {
   kind: CaptureKind;
   error?: Error;
   message?: string;
+  /** Only for `kind: "log"` — a raw, un-folded log line (see packages/types/src/log.ts). */
+  level?: LogLevel;
+  /** Only for `kind: "log"` — a SHALLOW COPY of the caller's fields, sanitized later in the worker. */
+  fields?: Record<string, unknown>;
   context?: BugBusterContext;
   timestampMs: number;
   release?: string;

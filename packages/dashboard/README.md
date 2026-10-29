@@ -32,6 +32,27 @@ build step. Either way, enter the backend URL and an API key (stored only in tha
 - `fidelity` is always shown as a badge — whether `count` is exact or a sampled/weighted estimate
   (Appendix A's FIDELITY invariant: never present a sampled count as unconditional truth).
 
+## Logs view
+
+A second tab (`#logs` is linkable) for application logs, newest first:
+
+- **Filters:** free-text search (substring, case-insensitive), time range, service, environment,
+  and level chips (debug / info / warn / error). Service and environment dropdowns are populated
+  from `GET /logs/facets`.
+- **Row detail:** click a line for the full multi-line message, version/environment, structured
+  fields, and the log id. "Copy JSON" copies the exact stored record.
+- **From an error to its logs:** every exemplar on an issue has a *View logs for this request*
+  button; a line with a trace id has *Show everything in this request*. Both filter the stream to
+  that one trace (shown as a removable chip) across all retained time.
+- **Live:** polls every 3 s and merges new lines in at the top without reloading. It re-fetches 15 s
+  of recent history each poll (lines arrive out of order) and de-duplicates by id. Best-effort by
+  design: under a flood it follows the newest lines rather than guaranteeing every one — use the
+  normal paged view for exact history. It pauses while the tab is hidden and keeps at most 2,000
+  lines in memory.
+
+Everything from the wire is rendered as text, never HTML — a log line is untrusted input, and a line
+containing `<img onerror=...>` shows up literally.
+
 ## What it deliberately doesn't do
 
 No live updates (polling/websockets), no multi-org switcher, no write/management actions. All

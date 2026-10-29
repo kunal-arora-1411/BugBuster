@@ -16,11 +16,15 @@ import { registerRoutes } from "./src/build-server.js";
 const config = BackendConfigSchema.parse({
   controlDbUri: process.env.BUGBUSTER_CONTROL_DB_URI ?? process.env.MONGODB_URI,
   port: Number(process.env.PORT ?? 8080),
+  logRetentionDays:
+    process.env.BUGBUSTER_LOG_RETENTION_DAYS !== undefined
+      ? Number(process.env.BUGBUSTER_LOG_RETENTION_DAYS)
+      : undefined,
 });
 
 const controlDb = new ControlDb(config.controlDbUri);
 await controlDb.connect();
 
 const fastify = Fastify({ bodyLimit: config.ingestMaxBodyBytes });
-registerRoutes(fastify, controlDb);
+registerRoutes(fastify, controlDb, { logRetentionDays: config.logRetentionDays });
 fastify.listen({ port: config.port, host: "0.0.0.0" });

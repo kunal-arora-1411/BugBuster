@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LogLevelSchema } from "./log.js";
 
 /**
  * Numeric budgets from ingest-pipeline.md's "Budgets" table / blueprint plate reference. These are
@@ -6,6 +7,8 @@ import { z } from "zod";
  * are the documented design targets, not arbitrary round numbers.
  */
 export const DEFAULT_RING_BUFFER_BYTES = 8 * 1024 * 1024; // 8 MB SDK memory ceiling
+export const DEFAULT_LOG_BUFFER_BYTES = 4 * 1024 * 1024; // 4 MB — logs get their OWN ring, so a log flood can never evict an exception
+export const DEFAULT_LOG_RETENTION_DAYS = 7;
 export const DEFAULT_MAX_LIVE_FINGERPRINTS = 10_000; // per process, per window
 export const DEFAULT_FLUSH_MAX_BATCH_BYTES = 512 * 1024; // ~512 KB
 export const DEFAULT_FLUSH_MAX_DELAY_MS = 5_000; // ~5s
@@ -31,10 +34,18 @@ export const SdkConfigSchema = z.object({
   agentSocketPath: z.string().min(1).default("/var/run/bugbuster/agent.sock"),
   backendUrl: z.string().url().optional(), // required only when falling back to HttpTransport
   ringBufferBytes: z.number().int().positive().default(DEFAULT_RING_BUFFER_BYTES),
+  /** Byte cap of the log ring buffer — separate from `ringBufferBytes` on purpose (see below). */
+  logBufferBytes: z.number().int().positive().default(DEFAULT_LOG_BUFFER_BYTES),
   maxLiveFingerprints: z.number().int().positive().default(DEFAULT_MAX_LIVE_FINGERPRINTS),
   flushMaxBatchBytes: z.number().int().positive().default(DEFAULT_FLUSH_MAX_BATCH_BYTES),
   flushMaxDelayMs: z.number().int().positive().default(DEFAULT_FLUSH_MAX_DELAY_MS),
   shutdownFlushTimeoutMs: z.number().int().positive().default(DEFAULT_SHUTDOWN_FLUSH_TIMEOUT_MS),
+  /**
+   * Lowest severity the SDK will record as a log line. Anything below it is discarded at the very
+   * top of the hot path (one integer compare — before sampling, before any allocation), so a
+   * chatty `debug` call costs essentially nothing in production. Does not affect exceptions.
+   */
+  minLogLevel: LogLevelSchema.default("info"),
 });
 export type SdkConfig = z.infer<typeof SdkConfigSchema>;
 
@@ -73,5 +84,12 @@ export const BackendConfigSchema = z.object({
     .int()
     .positive()
     .default(DEFAULT_FLUSH_MAX_BATCH_BYTES * 4),
+  /**
+   * How long log lines are kept before MongoDB's TTL monitor deletes them (days). Logs are the one
+   * data type here that grows without bound — unlike issues, which fold — so retention is a
+   * first-class setting, not an afterthought. 0 disables expiry (logs are kept forever; only do
+   * that if you are managing disk some other way).
+   */
+  logRetentionDays: z.number().int().nonnegative().default(DEFAULT_LOG_RETENTION_DAYS),
 });
 export type BackendConfig = z.infer<typeof BackendConfigSchema>;

@@ -32,3 +32,31 @@ export function decodeEnvelopeItems(buf: Buffer): EnvelopeItem[] {
   }
   return items;
 }
+
+/**
+ * Splits items into batches whose serialized size stays at or under `maxBytes` (each item measured
+ * as its JSON length plus a small per-item framing overhead). An item that is by itself larger
+ * than `maxBytes` still gets a batch of its own — this function never drops anything; deciding
+ * what is too large to accept is the receiver's job.
+ *
+ * Shared by the SDK and the Agent because both must keep every outbound POST under the backend's
+ * request-size limit: one oversize request is rejected whole (413), losing every item in it.
+ */
+export function splitIntoBatches<T>(items: readonly T[], maxBytes: number): T[][] {
+  const FRAMING_OVERHEAD_BYTES = 64; // the `{"type":"log","priority":N,"payload":...}` wrapper
+  const batches: T[][] = [];
+  let current: T[] = [];
+  let currentBytes = 0;
+  for (const item of items) {
+    const bytes = Buffer.byteLength(JSON.stringify(item), "utf8") + FRAMING_OVERHEAD_BYTES;
+    if (current.length > 0 && currentBytes + bytes > maxBytes) {
+      batches.push(current);
+      current = [];
+      currentBytes = 0;
+    }
+    current.push(item);
+    currentBytes += bytes;
+  }
+  if (current.length > 0) batches.push(current);
+  return batches;
+}
