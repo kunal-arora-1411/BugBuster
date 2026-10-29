@@ -5,7 +5,11 @@ import type { BugBusterEvent } from "@bugbusterhq/types";
 import { ControlDb } from "../../src/db/control.js";
 import { buildServer } from "../../src/build-server.js";
 import { TenantDbResolver } from "../../src/db/tenant.js";
-import { addExemplarRef, ensureIssuesIndexes, upsertFoldDelta } from "../../src/db/collections/issues.js";
+import {
+  addExemplarRef,
+  ensureIssuesIndexes,
+  upsertFoldDelta,
+} from "../../src/db/collections/issues.js";
 import { ensureEventsIndexes, insertExemplar } from "../../src/db/collections/events.js";
 import { _resetOrgCacheForTests } from "../../src/ingest/edge.js";
 
@@ -31,7 +35,11 @@ function exemplar(eventId: string, fingerprint: string): BugBusterEvent {
     trace: { traceId: "t", spanId: "s" },
     service: { name: "svc", version: "1.0.0", environment: "production" },
     source: { function: "handler", file: "handler.ts", line: 42 },
-    error: { type: "TypeError", message: "boom", stacktrace: "TypeError: boom\n  at handler.ts:42" },
+    error: {
+      type: "TypeError",
+      message: "boom",
+      stacktrace: "TypeError: boom\n  at handler.ts:42",
+    },
   };
 }
 
@@ -41,7 +49,10 @@ beforeAll(async () => {
   await controlDb.connect();
   await controlDb.createOrg(ORG);
   tenants = new TenantDbResolver(controlDb.getClient());
-  app = buildServer({ port: 0, controlDbUri: mongo.getUri(), ingestMaxBodyBytes: 1024 * 1024 }, controlDb);
+  app = buildServer(
+    { port: 0, controlDbUri: mongo.getUri(), ingestMaxBodyBytes: 1024 * 1024 },
+    controlDb,
+  );
   await app.ready();
 });
 
@@ -169,13 +180,18 @@ describe("GET /issues pagination", () => {
     const seen: string[] = [];
     let cursor: string | undefined;
     for (let i = 0; i < 10; i++) {
-      const url = cursor ? `/issues?limit=2&cursor=${encodeURIComponent(cursor)}` : "/issues?limit=2";
+      const url = cursor
+        ? `/issues?limit=2&cursor=${encodeURIComponent(cursor)}`
+        : "/issues?limit=2";
       const res = await app.inject({
         method: "GET",
         url,
         headers: { authorization: `Bearer ${PAGE_ORG.apiKey}` },
       });
-      const body = JSON.parse(res.body) as { issues: { fingerprint: string }[]; nextCursor?: string };
+      const body = JSON.parse(res.body) as {
+        issues: { fingerprint: string }[];
+        nextCursor?: string;
+      };
       seen.push(...body.issues.map((issue) => issue.fingerprint));
       cursor = body.nextCursor;
       if (!cursor) break;

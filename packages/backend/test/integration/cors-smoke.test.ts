@@ -40,7 +40,10 @@ describe("CORS for the dashboard", () => {
     const res = await app.inject({
       method: "OPTIONS",
       url: "/issues",
-      headers: { origin: "http://localhost:5173", "access-control-request-headers": "authorization" },
+      headers: {
+        origin: "http://localhost:5173",
+        "access-control-request-headers": "authorization",
+      },
     });
     expect(res.statusCode).toBe(204);
     expect(res.headers["access-control-allow-origin"]).toBe("*");
