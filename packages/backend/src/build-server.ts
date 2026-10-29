@@ -124,8 +124,10 @@ export function registerRoutes(
   const tenants = new TenantDbResolver(controlDb.getClient(), {
     logRetentionDays: options.logRetentionDays,
   });
-  // The Logs view loads its service/environment dropdowns on every open; computing distinct values
-  // scans the collection, so it is cached briefly per tenant database.
+  // The Logs view loads its service/environment dropdowns on every open, so the distinct values are
+  // cached per tenant database. Deliberately NOT invalidated on ingest: an active tenant ingests
+  // every few seconds, so invalidating there would mean the cache is never hit. Only the TTL
+  // expires it — a newly deployed service showing up in the dropdown within a minute is fine.
   const facetsCache = new Map<
     string,
     { at: number; value: { services: string[]; environments: string[] } }
@@ -176,11 +178,7 @@ export function registerRoutes(
     if (!org) return;
 
     const db = await tenants.forOrgDb(org.dbName);
-    const processed = await processEnvelope(
-      db,
-      (request.body as Buffer | undefined) ?? Buffer.alloc(0),
-    );
-    if (processed.processedLogs > 0) facetsCache.delete(org.dbName); // a new service may have appeared
+    await processEnvelope(db, (request.body as Buffer | undefined) ?? Buffer.alloc(0));
 
     const directives = computeDirectives(CONFIG_VERSION);
     reply.header(HEADER_SAMPLE_DIRECTIVE, JSON.stringify(directives.sample));

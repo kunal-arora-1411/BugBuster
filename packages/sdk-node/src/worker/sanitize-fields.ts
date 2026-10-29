@@ -24,8 +24,50 @@ const MAX_ARRAY_ITEMS = 50;
 const MAX_STRING_CHARS = 1024;
 const MAX_STACK_CHARS = 2048;
 
-const SENSITIVE_KEY_RE =
-  /(pass(word|wd|phrase)?|secret|token|authorization|api[-_]?key|cookie|credential|private[-_]?key|ssn)/i;
+// Key-name redaction matches whole key SEGMENTS (camelCase / snake_case / kebab-case split), not
+// raw substrings — a substring match redacts `className` (ssn), `passengers`/`bypassCache` (pass)
+// and `maxTokens` (token). Plurals are listed explicitly where they still name a secret; `tokens`
+// is deliberately absent, since as a key it is far more often a count than a credential.
+const SENSITIVE_SEGMENTS = new Set([
+  "pass",
+  "password",
+  "passwd",
+  "passphrase",
+  "secret",
+  "secrets",
+  "token",
+  "authorization",
+  "apikey",
+  "cookie",
+  "cookies",
+  "credential",
+  "credentials",
+  "privatekey",
+  "ssn",
+]);
+const SENSITIVE_SEGMENT_PAIRS = new Set(["api key", "private key"]);
+// Long, unambiguous words are still caught inside a run-together lowercase key ("dbpassword").
+const SENSITIVE_SUBSTRING_RE = /password|passwd|passphrase|credential|authorization|apikey/i;
+
+function keySegments(key: string): string[] {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2") // orderId -> order Id
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2") // APIKey -> API Key
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((s) => s.length > 0);
+}
+
+function isSensitiveKey(key: string): boolean {
+  if (SENSITIVE_SUBSTRING_RE.test(key)) return true;
+  const segments = keySegments(key);
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i] ?? "";
+    if (SENSITIVE_SEGMENTS.has(segment)) return true;
+    if (i > 0 && SENSITIVE_SEGMENT_PAIRS.has(`${segments[i - 1]} ${segment}`)) return true;
+  }
+  return false;
+}
 
 export const REDACTED_VALUE = "[redacted]";
 
@@ -110,7 +152,7 @@ function toSafeObject(
       break;
     }
     const key = safeKey(rawKey);
-    if (SENSITIVE_KEY_RE.test(rawKey)) {
+    if (isSensitiveKey(rawKey)) {
       out[key] = REDACTED_VALUE;
       kept++;
       continue;

@@ -1,4 +1,10 @@
-import { MongoBulkWriteError, MongoServerError, type Collection, type Db } from "mongodb";
+import {
+  MongoBulkWriteError,
+  MongoError,
+  MongoServerError,
+  type Collection,
+  type Db,
+} from "mongodb";
 import {
   MAX_LOG_FIELDS_BYTES,
   MAX_LOG_MESSAGE_CHARS,
@@ -56,6 +62,9 @@ function logsCollection(db: Db): Collection<LogDocument> {
  *    index (equality prefix + the same sort keys) so Mongo never has to sort in memory.
  *  - `(trace.traceId, timestamp, logId)`: "everything this request did" — the jump from an error
  *    to its logs. Partial, so lines with no trace (background jobs) don't bloat it.
+ *  - `(service.environment, timestamp, logId)`: the environment filter, same shape as the service
+ *    one. It also lets the facets `distinct("service.environment")` walk the index instead of
+ *    scanning every document (the service facet gets the same from the service index).
  *  - `receivedAt` TTL: retention.
  * There is deliberately no index on `level` or `message`: level filters ride the time range, and
  * substring search is a bounded regex scan over the (time-limited) result set — a text index
@@ -72,6 +81,7 @@ export async function ensureLogsIndexes(db: Db, opts: { retentionDays: number })
       { "trace.traceId": 1, timestamp: -1, logId: -1 },
       { partialFilterExpression: { "trace.traceId": { $exists: true } } },
     ),
+    logs.createIndex({ "service.environment": 1, timestamp: -1, logId: -1 }),
   ]);
   await ensureRetentionIndex(db, opts.retentionDays);
 }
@@ -102,14 +112,17 @@ async function ensureRetentionIndex(db: Db, retentionDays: number): Promise<void
   }
 }
 
-/** Recursively makes field KEYS storable: no dots, no leading `$`, bounded depth. */
+/**
+ * Recursively makes field KEYS storable: no dots, no leading `$`, no NUL (BSON keys are C strings —
+ * the serializer throws on one, which would fail the whole insert), bounded depth.
+ */
 function sanitizeKeys(value: unknown, depth: number): unknown {
   if (depth > 8) return "[Object]";
   if (Array.isArray(value)) return value.slice(0, 100).map((v) => sanitizeKeys(v, depth + 1));
   if (value !== null && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [key, v] of Object.entries(value)) {
-      let k = key.replace(/\./g, "_");
+      let k = key.replace(/\./g, "_").replace(/\0/g, "");
       if (k.startsWith("$")) k = `_${k.slice(1)}`;
       out[k.length > 0 ? k : "_"] = sanitizeKeys(v, depth + 1);
     }
@@ -158,18 +171,15 @@ function isOnlyDuplicateKeyErrors(err: MongoBulkWriteError): boolean {
   return errors.length > 0 && errors.every((e) => e.code === DUPLICATE_KEY_ERROR_CODE);
 }
 
-/**
- * Inserts a batch of log lines. Idempotent: a line whose `logId` already exists (the Agent or SDK
- * retried a batch whose first attempt actually landed) is skipped, not duplicated and not an
- * error. Unordered, so one bad document never blocks the rest of the batch.
- */
-export async function insertLogs(
-  db: Db,
-  entries: readonly LogEntry[],
-  receivedAt = new Date(),
-): Promise<number> {
-  if (entries.length === 0) return 0;
-  const docs = entries.map((e) => toLogDocument(e, receivedAt));
+export interface InsertLogsResult {
+  /** Lines newly stored (a re-delivered duplicate of an already-stored line is not counted). */
+  inserted: number;
+  /** Lines the driver could not serialize at all — discarded rather than failing the batch. */
+  rejected: number;
+}
+
+/** Inserts one batch, treating "already stored" (duplicate logId) as success. */
+async function insertDocs(db: Db, docs: LogDocument[]): Promise<number> {
   try {
     const result = await logsCollection(db).insertMany(docs, { ordered: false });
     return result.insertedCount;
@@ -180,6 +190,44 @@ export async function insertLogs(
     if (err instanceof MongoServerError && err.code === DUPLICATE_KEY_ERROR_CODE) return 0;
     throw err;
   }
+}
+
+/**
+ * Inserts a batch of log lines. Idempotent: a line whose `logId` already exists (the Agent or SDK
+ * retried a batch whose first attempt actually landed) is skipped, not duplicated and not an
+ * error. Unordered, so one bad document never blocks the rest of the batch.
+ *
+ * Failures split two ways:
+ *  - A MongoError (network, server, write concern) is transient — it is rethrown so the request
+ *    fails and the sender retries; the retry is safe because of the `logId` index.
+ *  - Anything else is the client-side serializer rejecting a document. That is deterministic: a
+ *    retry would fail identically forever. So the batch is re-inserted line by line and only the
+ *    unserializable lines are discarded (and counted) — one poison line never sinks the batch.
+ */
+export async function insertLogs(
+  db: Db,
+  entries: readonly LogEntry[],
+  receivedAt = new Date(),
+): Promise<InsertLogsResult> {
+  if (entries.length === 0) return { inserted: 0, rejected: 0 };
+  const docs = entries.map((e) => toLogDocument(e, receivedAt));
+  try {
+    return { inserted: await insertDocs(db, docs), rejected: 0 };
+  } catch (err) {
+    if (err instanceof MongoError) throw err;
+  }
+
+  let inserted = 0;
+  let rejected = 0;
+  for (const doc of docs) {
+    try {
+      inserted += await insertDocs(db, [doc]);
+    } catch (err) {
+      if (err instanceof MongoError) throw err;
+      rejected++;
+    }
+  }
+  return { inserted, rejected };
 }
 
 /* ------------------------------------------------------------------------------------------ */

@@ -20,6 +20,11 @@ export interface CaptureEngine {
    * Anything below the configured `minLogLevel` is discarded immediately.
    */
   captureLog(level: LogLevel, message: string, fields?: Record<string, unknown>): void;
+  /**
+   * Whether `captureLog` at this level would record anything. Lets a caller that must do real work
+   * to build a message (e.g. a console hook formatting its arguments) skip it for filtered levels.
+   */
+  isLogLevelEnabled(level: LogLevel): boolean;
 }
 
 export interface CaptureEngineDeps {
@@ -65,6 +70,13 @@ export function createCaptureEngine(deps: CaptureEngineDeps): CaptureEngine {
   const seenErrors = new WeakSet<object>();
 
   const minLogOrder = LOG_LEVEL_ORDER[deps.minLogLevel ?? "info"];
+
+  // Own-property lookup: an untyped caller passing "constructor" or "toString" must get undefined,
+  // not a function inherited from Object.prototype that then slips past the comparison below.
+  function isLogLevelEnabled(level: LogLevel): boolean {
+    if (!Object.hasOwn(LOG_LEVEL_ORDER, level)) return false;
+    return LOG_LEVEL_ORDER[level] >= minLogOrder;
+  }
   const logRing = deps.logRing ?? deps.ring;
 
   function capture(
@@ -137,9 +149,8 @@ export function createCaptureEngine(deps: CaptureEngineDeps): CaptureEngine {
         // The cheapest possible rejection comes first — before the recursion guard, before the
         // sampler's Math.random(), before any allocation. A `debug` call in a production service
         // (minLogLevel "info") must cost one lookup and one compare, nothing more. An unknown
-        // level from an untyped caller yields `undefined`, which is also rejected here.
-        const order = LOG_LEVEL_ORDER[level];
-        if (order === undefined || order < minLogOrder) return;
+        // level from an untyped caller is also rejected here.
+        if (!isLogLevelEnabled(level)) return;
 
         let text = typeof message === "string" ? message : String(message);
         // Bound retained memory up front: a 5 MB string logged by mistake must not sit in the
@@ -162,5 +173,6 @@ export function createCaptureEngine(deps: CaptureEngineDeps): CaptureEngine {
         // swallowed by design — see rule 1 above
       }
     },
+    isLogLevelEnabled,
   };
 }

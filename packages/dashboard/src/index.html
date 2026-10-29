@@ -681,12 +681,15 @@
   const MAX_LINES = 2000;        // in-memory cap while tailing
   const TAIL_INTERVAL_MS = 3000;
   const TAIL_LOOKBACK_MS = 15000; // re-fetch a little history each poll: lines arrive out of order
+  const TAIL_PAGE_LIMIT = 500;
+  const TAIL_MAX_PAGES = Math.ceil(MAX_LINES / TAIL_PAGE_LIMIT); // more than that would be trimmed anyway
 
   let currentView = "issues";
   let logs = [];                 // newest first
   let seenLogIds = new Set();
   let logsNextCursor;
   let logsTrimmed = false;
+  let tailGap = false;            // live tail fell behind and skipped lines it could not fetch
   let logsReqSeq = 0;            // discards a slow response that a newer filter change has overtaken
   let openLogId = null;
   let tailTimer = null;
@@ -768,7 +771,7 @@
       const data = await fetchLogs(params);
       if (seq !== logsReqSeq) return;     // a newer request superseded this one
       const incoming = data.logs || [];
-      if (!append) { logs = []; seenLogIds = new Set(); openLogId = null; logsTrimmed = false; }
+      if (!append) { logs = []; seenLogIds = new Set(); openLogId = null; logsTrimmed = false; tailGap = false; }
       for (const l of incoming) if (!seenLogIds.has(l.logId)) { seenLogIds.add(l.logId); logs.push(l); }
       logsNextCursor = data.nextCursor;
       renderLogs();
@@ -786,6 +789,7 @@
     if (logs.length) t += " · " + errors + " error" + (errors === 1 ? "" : "s") + " · " + warns + " warning" + (warns === 1 ? "" : "s");
     if (logsNextCursor && !logsTrimmed) t += " · older lines available";
     if (logsTrimmed) t += " · oldest lines trimmed while live — turn Live off to browse history";
+    if (tailGap) t += " · gap: lines arrived faster than Live could fetch, some were skipped — turn Live off to browse history";
     return t + " · times in IST";
   }
 
@@ -836,11 +840,28 @@
     const seq = logsReqSeq;
     try {
       const newest = logs.length ? Date.parse(logs[0].timestamp) : Date.now() - 60000;
-      const params = logQueryParams({ from: new Date(newest - TAIL_LOOKBACK_MS).toISOString(), limit: 500 });
-      const data = await fetchLogs(params);
-      if (seq !== logsReqSeq) return;     // filters changed mid-flight; the reload owns the list now
-      const fresh = (data.logs || []).filter(l => !seenLogIds.has(l.logId));
-      if (fresh.length === 0) return;
+      const from = new Date(newest - TAIL_LOOKBACK_MS).toISOString();
+      // Results come newest-first, so a busy window can need more than one page: keep following
+      // nextCursor until a page reaches lines we already hold. Stopping after the first page would
+      // silently skip the older new lines, and the next tick's `newest` would move past them.
+      const fresh = [];
+      let cursor;
+      let caughtUp = false;
+      for (let page = 0; page < TAIL_MAX_PAGES; page++) {
+        const data = await fetchLogs(logQueryParams({ from, limit: TAIL_PAGE_LIMIT, cursor }));
+        if (seq !== logsReqSeq) return;   // filters changed mid-flight; the reload owns the list now
+        let reachedKnown = false;
+        for (const l of data.logs || []) {
+          if (seenLogIds.has(l.logId)) reachedKnown = true;
+          else fresh.push(l);
+        }
+        cursor = data.nextCursor;
+        if (!cursor || reachedKnown) { caughtUp = true; break; }
+      }
+      // Gave up before reaching what we already hold: say so rather than hide it. (With nothing
+      // held yet there is nothing to have skipped between — the list just starts at the newest.)
+      if (!caughtUp && logs.length > 0) tailGap = true;
+      if (fresh.length === 0) { if (tailGap) setLogsStatus(logsSummary()); return; }
       for (const l of fresh) seenLogIds.add(l.logId);
       logs = fresh.concat(logs).sort(compareLogsDesc);
       if (logs.length > MAX_LINES) {

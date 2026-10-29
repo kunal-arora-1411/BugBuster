@@ -206,6 +206,29 @@ describe("UdsServer — log forwarding", () => {
     });
   });
 
+  it("caps held lines by bytes too: a few huge lines can't exhaust memory under the line cap", async () => {
+    const big = "x".repeat(4000); // ~4 KB serialized per line
+    await withAgent({ maxPendingLogBytes: 20_000 }, async (socketPath, server) => {
+      await send(
+        socketPath,
+        logEnvelope(...Array.from({ length: 10 }, (_, i) => log(`info ${i} ${big}`, "info"))),
+      );
+      await send(socketPath, logEnvelope(log(`error ${big}`, "error")));
+      await server.flush();
+
+      const messages = logsIn(received).map((i) => i.payload.message.split(" ")[0]);
+      const infos = messages.filter((m) => m === "info").length;
+      expect(infos).toBeGreaterThan(0);
+      expect(infos).toBeLessThan(5); // 10 x ~4 KB does not fit in 20 KB
+      expect(messages).toContain("error"); // warn/error still admitted up to 2x the byte cap
+
+      const dropped = received
+        .flat()
+        .reduce((n, i) => n + (i.type === "meta" ? i.payload.droppedBufferFull : 0), 0);
+      expect(dropped).toBe(10 - infos);
+    });
+  });
+
   it("a second flush after a shed window starts clean (no stale drop count, no stale lines)", async () => {
     await withAgent({ maxPendingLogs: 2 }, async (socketPath, server) => {
       await send(socketPath, logEnvelope(log("a"), log("b"), log("c"), log("d")));

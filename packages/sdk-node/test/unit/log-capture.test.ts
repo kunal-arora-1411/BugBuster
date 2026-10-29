@@ -68,6 +68,22 @@ describe("captureLog hot path", () => {
     expect(logRing.length).toBe(0);
   });
 
+  it("rejects Object.prototype names as levels (no inherited lookup)", () => {
+    const { engine, logRing } = harness({ minLogLevel: "debug" });
+    for (const level of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+      engine.captureLog(level as never, "x");
+      expect(engine.isLogLevelEnabled(level as never)).toBe(false);
+    }
+    expect(logRing.length).toBe(0);
+  });
+
+  it("isLogLevelEnabled mirrors minLogLevel", () => {
+    const { engine } = harness({ minLogLevel: "warn" });
+    expect(
+      ["debug", "info", "warn", "error"].map((l) => engine.isLogLevelEnabled(l as never)),
+    ).toEqual([false, false, true, true]);
+  });
+
   it("obeys the backend's per-type sample rate for logs, independently of errors", () => {
     const { engine, sampler, ring, logRing, counters } = harness();
     sampler.updateRates({ log: 0 });

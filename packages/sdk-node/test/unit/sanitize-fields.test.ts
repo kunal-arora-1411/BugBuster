@@ -28,6 +28,34 @@ describe("sanitizeFields", () => {
     });
   });
 
+  it("matches key segments, not substrings: common keys that merely contain a word are kept", () => {
+    const input = {
+      className: "btn",
+      passengers: 3,
+      compass: "N",
+      bypassCache: true,
+      maxTokens: 512,
+      tokenizer: "bpe",
+      keyboard: "us",
+    };
+    expect(sanitizeFields(input)).toEqual(input);
+  });
+
+  it("still redacts each casing style of a sensitive key", () => {
+    const out = sanitizeFields({
+      APIKey: "a",
+      api_key: "b",
+      "set-cookie": "c",
+      client_secret: "d",
+      refreshToken: "e",
+      privateKey: "f",
+      SSN: "g",
+      dbpassword: "h",
+      pass: "i",
+    });
+    expect(Object.values(out ?? {}).every((v) => v === REDACTED_VALUE)).toBe(true);
+  });
+
   it("redacts sensitive patterns inside string values (emails, bearer tokens)", () => {
     const out = sanitizeFields({ note: "contact bob@example.com", hdr: "Bearer abc.def.ghi" });
     expect(out?.note).toBe("contact [redacted-email]");

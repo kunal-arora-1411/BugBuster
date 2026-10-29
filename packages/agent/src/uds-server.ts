@@ -22,6 +22,9 @@ const AGENT_VERSION = "0.0.0";
 // Logs are the first item type whose volume is not bounded by fingerprint cardinality, so the
 // Agent — a long-lived daemon every service on the host funnels through — must bound them itself.
 const DEFAULT_MAX_PENDING_LOGS = 50_000;
+// The line count alone does not bound memory: one line can carry an 8K-char message plus ~16 KB of
+// fields, so 100k lines could be gigabytes. The byte cap is what actually protects the daemon.
+const DEFAULT_MAX_PENDING_LOG_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_BATCH_BYTES = 512 * 1024; // matches the SDK's flushMaxBatchBytes default
 // Priority >= this is warn/error (or higher): kept past the soft cap, up to HARD_CAP_FACTOR x.
 const KEEP_PRIORITY = 3;
@@ -38,6 +41,12 @@ export interface UdsServerOptions {
    * drop counters sent upstream — never silently lost.
    */
   maxPendingLogs?: number;
+  /**
+   * Soft cap on the serialized bytes of log lines held between flushes (default 64 MB), with the
+   * same shed ladder as `maxPendingLogs`: warn/error lines are kept up to twice the cap. Whichever
+   * cap is reached first applies.
+   */
+  maxPendingLogBytes?: number;
   /** Max serialized size of log lines per outbound request (default 512 KB, pre-compression). */
   maxBatchBytes?: number;
 }
@@ -54,6 +63,7 @@ export class UdsServer {
   private pendingExemplars: PrioritizedExemplar[] = [];
   private pendingMeta: DropCounters[] = [];
   private pendingLogs: PrioritizedLog[] = [];
+  private pendingLogBytes = 0;
   private droppedLogs = 0;
   private timer?: NodeJS.Timeout;
 
@@ -96,13 +106,16 @@ export class UdsServer {
    * (priority 3) are still admitted up to a hard cap. Refusals are counted, not hidden.
    */
   private acceptLog(log: PrioritizedLog): void {
-    const softCap = this.options.maxPendingLogs ?? DEFAULT_MAX_PENDING_LOGS;
-    const cap = log.priority >= KEEP_PRIORITY ? softCap * HARD_CAP_FACTOR : softCap;
-    if (this.pendingLogs.length >= cap) {
+    const factor = log.priority >= KEEP_PRIORITY ? HARD_CAP_FACTOR : 1;
+    const countCap = (this.options.maxPendingLogs ?? DEFAULT_MAX_PENDING_LOGS) * factor;
+    const byteCap = (this.options.maxPendingLogBytes ?? DEFAULT_MAX_PENDING_LOG_BYTES) * factor;
+    const bytes = Buffer.byteLength(JSON.stringify(log.payload), "utf8");
+    if (this.pendingLogs.length >= countCap || this.pendingLogBytes + bytes > byteCap) {
       this.droppedLogs++;
       return;
     }
     this.pendingLogs.push(log);
+    this.pendingLogBytes += bytes;
   }
 
   async start(): Promise<void> {
@@ -202,6 +215,7 @@ export class UdsServer {
     this.pendingExemplars = [];
     this.pendingMeta = [];
     this.pendingLogs = [];
+    this.pendingLogBytes = 0;
     this.droppedLogs = 0;
 
     for (const payload of payloads) {

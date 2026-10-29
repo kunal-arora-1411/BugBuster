@@ -44,7 +44,11 @@ export function splitLogsIntoBatches(logs: readonly LogEntry[], maxBytes: number
 export function buildEnvelope(input: {
   deltas: FoldDelta[];
   exemplars: BugBusterEvent[];
-  meta: DropCounters;
+  /**
+   * Drop counters for this envelope. Omit on every envelope but the first of a flush: the Agent
+   * and backend SUM the meta records they receive, so a repeated record over-reports drops.
+   */
+  meta?: DropCounters;
   sdkVersion: string;
   newFingerprints: ReadonlySet<string>;
   /** Fingerprints currently suppressed (§7.1) — their exemplars are dropped, counts are kept. */
@@ -78,7 +82,7 @@ export function buildEnvelope(input: {
     items.push({ type: "log", priority: priorityForLog(log.level), payload: log });
   }
 
-  items.push({ type: "meta", priority: 3, payload: input.meta });
+  if (input.meta) items.push({ type: "meta", priority: 3, payload: input.meta });
 
   return { sentAt: new Date().toISOString(), sdkVersion: input.sdkVersion, items };
 }

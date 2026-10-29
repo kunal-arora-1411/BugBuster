@@ -8,13 +8,21 @@ import { runWithContext } from "../../src/context.js";
 let server: Server;
 let port: number;
 let posts: EnvelopeItem[][];
+/** POSTs left to reject (non-retryable 400) before accepting again; rejected bodies aren't kept. */
+let rejectNext: number;
 
 beforeEach(async () => {
   posts = [];
+  rejectNext = 0;
   server = createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end", () => {
+      if (rejectNext > 0) {
+        rejectNext--;
+        res.writeHead(400).end();
+        return;
+      }
       posts.push(decodeEnvelopeItems(Buffer.concat(chunks)));
       res.writeHead(202).end();
     });
@@ -155,6 +163,33 @@ describe("init() — logs through the real pipeline", () => {
       expect(post.some((i) => i.type === "fold" || i.type === "exemplar")).toBe(false);
     }
     expect(posts[0]?.some((i) => i.type === "fold")).toBe(true);
+  });
+
+  it("sends drop counters once per flush, not once per batch", async () => {
+    const c = client({ flushMaxBatchBytes: 2000 });
+    for (let i = 0; i < 100; i++) c.log.info(`line ${i} ${"x".repeat(100)}`);
+    await c.shutdown();
+
+    expect(posts.length).toBeGreaterThan(1);
+    expect(allItems().filter((i) => i.type === "meta")).toHaveLength(1);
+    expect(posts[0]?.some((i) => i.type === "meta")).toBe(true);
+  });
+
+  it("counts every line of a flush whose first envelope failed, and reports it next flush", async () => {
+    const c = client({ flushMaxBatchBytes: 2000 });
+    for (let i = 0; i < 100; i++) c.log.info(`line ${i} ${"x".repeat(100)}`);
+    rejectNext = 1;
+    await c.shutdown(); // first envelope rejected: nothing from this flush is delivered
+    expect(posts).toHaveLength(0);
+
+    c.log.info("after the outage");
+    await c.shutdown();
+    const metas = allItems().filter(
+      (i): i is Extract<EnvelopeItem, { type: "meta" }> => i.type === "meta",
+    );
+    expect(metas).toHaveLength(1);
+    expect(metas[0]?.payload.droppedQuota).toBe(100);
+    expect(logItems().map((i) => i.payload.message)).toEqual(["after the outage"]);
   });
 
   it("a log flood cannot evict an exception (separate buffers, end to end)", async () => {

@@ -37,7 +37,7 @@ function markCaptured(): void {
  * become no-ops for it.
  */
 export type IntegrationClient = Pick<CaptureEngine, "captureException" | "captureMessage"> &
-  Partial<Pick<CaptureEngine, "captureLog">>;
+  Partial<Pick<CaptureEngine, "captureLog" | "isLogLevelEnabled">>;
 
 /** Wraps a client so every manual capture call also marks the current request captured. */
 function trackingClient(client: IntegrationClient): CaptureEngine {
@@ -54,6 +54,11 @@ function trackingClient(client: IntegrationClient): CaptureEngine {
     // never suppress the HandledHttpError safety net for a 5xx nothing else reported.
     captureLog(level, message, fields) {
       client.captureLog?.(level, message, fields);
+    },
+    isLogLevelEnabled(level) {
+      if (!client.captureLog) return false;
+      // A client without the check (an older client, a test double) filters inside captureLog.
+      return client.isLogLevelEnabled?.(level) ?? true;
     },
   };
 }
@@ -205,7 +210,9 @@ export function createExpressIntegration(
     const originalInfo = console.info;
 
     const emitLog = (level: LogLevel, args: unknown[]): void => {
-      if (!logs) return;
+      // Level check BEFORE format(): with minLogLevel "warn", a console.log(bigObject) in a hot
+      // loop must not pay for a deep inspect whose result would be thrown away.
+      if (!logs || !tracked.isLogLevelEnabled(level)) return;
       try {
         tracked.captureLog(level, format(...args));
       } catch {
@@ -259,6 +266,7 @@ export function createExpressIntegration(
     captureException: tracked.captureException,
     captureMessage: tracked.captureMessage,
     captureLog: tracked.captureLog,
+    isLogLevelEnabled: tracked.isLogLevelEnabled,
     log: createLogApi(tracked.captureLog),
     requestHandler,
     instrumentConsole,

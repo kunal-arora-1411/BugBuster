@@ -11,15 +11,13 @@
 import Fastify from "fastify";
 import { BackendConfigSchema } from "@bugbusterhq/types";
 import { ControlDb } from "./src/db/control.js";
+import { parseLogRetentionDays } from "./src/env.js";
 import { registerRoutes } from "./src/build-server.js";
 
 const config = BackendConfigSchema.parse({
   controlDbUri: process.env.BUGBUSTER_CONTROL_DB_URI ?? process.env.MONGODB_URI,
   port: Number(process.env.PORT ?? 8080),
-  logRetentionDays:
-    process.env.BUGBUSTER_LOG_RETENTION_DAYS !== undefined
-      ? Number(process.env.BUGBUSTER_LOG_RETENTION_DAYS)
-      : undefined,
+  logRetentionDays: parseLogRetentionDays(process.env.BUGBUSTER_LOG_RETENTION_DAYS),
 });
 
 const controlDb = new ControlDb(config.controlDbUri);

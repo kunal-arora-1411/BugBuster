@@ -184,6 +184,30 @@ describe("express instrumentConsole({ logs: true })", () => {
     expect(innerOriginals.log).toBeDefined();
   });
 
+  it("never formats arguments for a level the client filters out", () => {
+    const { client, logs } = mockClient();
+    const bb = createExpressIntegration({
+      ...client,
+      isLogLevelEnabled: (level: LogLevel) => level === "warn" || level === "error",
+    });
+    const saved = console.log;
+    console.log = () => {};
+    restore = bb.instrumentConsole({ logs: true });
+    let inspected = false;
+    const watched = {
+      [Symbol.for("nodejs.util.inspect.custom")]: () => {
+        inspected = true;
+        return "watched";
+      },
+    };
+    console.log(watched);
+    restore();
+    restore = undefined;
+    console.log = saved;
+    expect(inspected).toBe(false);
+    expect(logs).toHaveLength(0);
+  });
+
   it("still calls the original console method (output is never swallowed)", () => {
     const { client } = mockClient();
     const bb = createExpressIntegration(client);

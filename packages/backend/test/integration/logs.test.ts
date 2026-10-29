@@ -1,6 +1,7 @@
 import { MongoMemoryServer } from "mongodb-memory-server";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
+import { Collection, MongoNetworkError } from "mongodb";
 import {
   encodeEnvelope,
   MAX_LOG_MESSAGE_CHARS,
@@ -441,23 +442,37 @@ describe("GET /logs/facets", () => {
     });
   });
 
-  it("reflects a newly-appeared service after ingest (the cache is invalidated)", async () => {
+  it("is cached per tenant: ingest does not invalidate it, only the TTL does", async () => {
     const get = () =>
       app.inject({
         method: "GET",
         url: "/logs/facets",
         headers: { authorization: `Bearer ${ORG_A.apiKey}` },
       });
-    await ingest(
-      ORG_A.apiKey,
-      log({ message: "1", service: { name: "first-svc", version: "1", environment: "p" } }),
-    );
-    expect((await get()).json().services).toEqual(["first-svc"]);
-    await ingest(
-      ORG_A.apiKey,
-      log({ message: "2", service: { name: "second-svc", version: "1", environment: "p" } }),
-    );
-    expect((await get()).json().services).toEqual(["first-svc", "second-svc"]);
+    // The server (and its cache) is shared across tests, so the clock starts well past anything
+    // an earlier test cached.
+    const start = Date.now() + 10 * 60_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+    try {
+      await ingest(
+        ORG_A.apiKey,
+        log({ message: "1", service: { name: "first-svc", version: "1", environment: "p" } }),
+      );
+      expect((await get()).json().services).toEqual(["first-svc"]);
+      await ingest(
+        ORG_A.apiKey,
+        log({ message: "2", service: { name: "second-svc", version: "1", environment: "p" } }),
+      );
+      // Still the cached value: an active tenant ingests constantly, so invalidating on ingest
+      // would mean the cache is never hit.
+      clock.mockReturnValue(start + 1_000);
+      expect((await get()).json().services).toEqual(["first-svc"]);
+
+      clock.mockReturnValue(start + 61_000);
+      expect((await get()).json().services).toEqual(["first-svc", "second-svc"]);
+    } finally {
+      clock.mockRestore();
+    }
   });
 });
 
@@ -489,6 +504,107 @@ describe("storage hardening (the wire is untrusted)", () => {
     await ingest(ORG_A.apiKey, log({ message: "from the future", timestamp: future }));
     const [stored] = (await getLogs(ORG_A.apiKey)).body.logs;
     expect(Date.parse(stored!.timestamp)).toBeLessThan(Date.now() + 60_000);
+  });
+});
+
+describe("a log-insert failure never double-counts folds", () => {
+  const fingerprint = "fp-log-order";
+
+  async function ingestFoldAndLog(logEntry: LogEntry) {
+    const envelope: Envelope = {
+      sentAt: new Date().toISOString(),
+      sdkVersion: "0.0.0",
+      items: [
+        {
+          type: "fold",
+          priority: 9,
+          payload: {
+            fingerprint,
+            windowStart: new Date(0).toISOString(),
+            windowEnd: new Date().toISOString(),
+            count: 2,
+            userIds: [],
+            endpointCounts: {},
+            durationSamplesMs: [],
+            exemplars: [],
+          },
+        },
+        { type: "log", priority: 1, payload: logEntry },
+      ],
+    };
+    return app.inject({
+      method: "POST",
+      url: "/ingest",
+      headers: { authorization: `Bearer ${ORG_A.apiKey}`, "content-type": "application/x-ndjson" },
+      payload: encodeEnvelope(envelope),
+    });
+  }
+
+  const issueCount = async () =>
+    (
+      await controlDb
+        .getClient()
+        .db(ORG_A.dbName)
+        .collection("issues")
+        .findOne({ fingerprint }, { projection: { count: 1 } })
+    )?.count;
+
+  beforeEach(async () => {
+    await controlDb.getClient().db(ORG_A.dbName).collection("issues").deleteMany({ fingerprint });
+  });
+
+  it("a transient insert failure fails the request BEFORE any fold is applied, so the retry counts once", async () => {
+    const entry = log({ message: "retried" });
+    const insertMany = vi
+      .spyOn(Collection.prototype, "insertMany")
+      .mockRejectedValueOnce(new MongoNetworkError("socket hang up"));
+    try {
+      expect((await ingestFoldAndLog(entry)).statusCode).toBe(500);
+      expect(await issueCount()).toBeUndefined();
+    } finally {
+      insertMany.mockRestore();
+    }
+
+    expect((await ingestFoldAndLog(entry)).statusCode).toBe(202);
+    expect(await issueCount()).toBe(2);
+    expect((await getLogs(ORG_A.apiKey)).body.logs.map((l) => l.message)).toEqual(["retried"]);
+  });
+
+  it("an unserializable line is discarded on its own; the rest of the batch and the folds land", async () => {
+    // The real serializer can no longer be made to fail from wire input (toLogDocument strips what
+    // it rejects), so the deterministic client-side failure is simulated for one specific line.
+    const poison = log({ message: "poison" });
+    const real = Collection.prototype.insertMany;
+    const insertMany = vi.spyOn(Collection.prototype, "insertMany").mockImplementation(function (
+      this: Collection,
+      docs,
+      options,
+    ) {
+      if (docs.some((d) => (d as { logId?: string }).logId === poison.logId)) {
+        return Promise.reject(new TypeError("cannot serialize"));
+      }
+      return real.call(this, docs, options);
+    });
+    try {
+      const fine = log({ message: "fine" });
+      const res = await ingest(ORG_A.apiKey, poison, fine);
+      expect(res.statusCode).toBe(202);
+      expect(await ingestFoldAndLog(log({ message: "with fold" })).then((r) => r.statusCode)).toBe(
+        202,
+      );
+    } finally {
+      insertMany.mockRestore();
+    }
+    const messages = (await getLogs(ORG_A.apiKey)).body.logs.map((l) => l.message).sort();
+    expect(messages).toEqual(["fine", "with fold"]);
+    expect(await issueCount()).toBe(2);
+  });
+
+  it("strips NUL characters from field keys instead of letting the serializer throw", async () => {
+    const res = await ingest(ORG_A.apiKey, log({ message: "nul", fields: { "a b": 1 } }));
+    expect(res.statusCode).toBe(202);
+    const [stored] = (await getLogs(ORG_A.apiKey)).body.logs;
+    expect(stored?.fields).toEqual({ ab: 1 });
   });
 });
 

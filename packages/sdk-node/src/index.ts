@@ -140,36 +140,47 @@ export function init(rawConfig: unknown): BugBusterClient {
       config.flushMaxBatchBytes,
     );
 
+    // Every log line this flush does not manage to send is COUNTED rather than lost silently
+    // (§3.4 — "drop counters are sacred"). The count lands in the counters, so it is reported by
+    // the next flush that gets through.
+    const countUnsent = (batches: readonly LogEntry[][]): void => {
+      for (const batch of batches) counters.droppedQuota += batch.length;
+    };
+
+    // The drop counters ride in the first envelope ONLY: the Agent and backend sum every meta
+    // record they receive, so repeating them on each follow-up batch would report N x the drops.
+    const sentMeta = { ...counters };
     const first = buildEnvelope({
       deltas,
       exemplars,
-      meta: { ...counters },
+      meta: sentMeta,
       sdkVersion: SDK_VERSION,
       newFingerprints: newFingerprintsThisFlush,
       isSuppressed: (fp) => suppression.isSuppressed(fp),
       logs: firstLogs,
     });
-    if (!(await sendEnvelope(first))) return;
-    counters.reset();
+    if (!(await sendEnvelope(first))) {
+      countUnsent([firstLogs, ...remainingBatches]);
+      return;
+    }
+    counters.consume(sentMeta);
 
     for (let i = 0; i < remainingBatches.length; i++) {
       const batch = remainingBatches[i] ?? [];
-      // The backend asked us to pause mid-flush: stop sending, and COUNT what we are not sending
-      // rather than losing it silently (§3.4 — "drop counters are sacred").
+      // The backend asked us to pause mid-flush: stop sending.
       if (Date.now() < retryAfterUntilMs) {
-        for (const rest of remainingBatches.slice(i)) counters.droppedQuota += rest.length;
+        countUnsent(remainingBatches.slice(i));
         return;
       }
       const envelope = buildEnvelope({
         deltas: [],
         exemplars: [],
-        meta: { ...counters },
         sdkVersion: SDK_VERSION,
         newFingerprints: newFingerprintsThisFlush,
         logs: batch,
       });
       if (!(await sendEnvelope(envelope))) {
-        for (const rest of remainingBatches.slice(i)) counters.droppedQuota += rest.length;
+        countUnsent(remainingBatches.slice(i));
         return;
       }
     }
