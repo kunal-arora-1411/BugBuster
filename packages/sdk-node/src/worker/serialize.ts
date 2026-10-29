@@ -4,8 +4,35 @@ import type {
   Envelope,
   EnvelopeItem,
   FoldDelta,
+  LogEntry,
+  LogLevel,
+  Priority,
 } from "@bugbusterhq/types";
-import { encodeEnvelope, NEVER_SHED_PRIORITIES } from "@bugbusterhq/types";
+import { encodeEnvelope, NEVER_SHED_PRIORITIES, splitIntoBatches } from "@bugbusterhq/types";
+
+/**
+ * Priority byte for a log line, per the shed ladder (envelope.ts): chatter goes first.
+ * debug -> 0, info -> 1, warn/error -> 3 (same tier as aggregate counts — kept over info chatter
+ * but, unlike a 5xx exemplar or a new fingerprint, still sheddable under real pressure).
+ */
+export function priorityForLog(level: LogLevel): Priority {
+  if (level === "debug") return 0;
+  if (level === "info") return 1;
+  return 3;
+}
+
+/**
+ * Splits log lines into batches of at most `maxBytes` of serialized JSON each (a single oversize
+ * line still gets its own batch — it is never dropped here; the backend decides what to reject).
+ *
+ * Needed because the log path is the first thing in BugBuster whose volume per flush window is
+ * unbounded by fingerprint cardinality: one 5-second window of a busy service can serialize to
+ * far more than the backend's request-size limit (ingestMaxBodyBytes), and a single oversize POST
+ * is rejected whole (413) — losing every line in it, including the errors.
+ */
+export function splitLogsIntoBatches(logs: readonly LogEntry[], maxBytes: number): LogEntry[][] {
+  return splitIntoBatches(logs, maxBytes);
+}
 
 /**
  * Builds the typed Envelope from one flush cycle's fold deltas, exemplars, and drop-counter meta.
@@ -17,11 +44,17 @@ import { encodeEnvelope, NEVER_SHED_PRIORITIES } from "@bugbusterhq/types";
 export function buildEnvelope(input: {
   deltas: FoldDelta[];
   exemplars: BugBusterEvent[];
-  meta: DropCounters;
+  /**
+   * Drop counters for this envelope. Omit on every envelope but the first of a flush: the Agent
+   * and backend SUM the meta records they receive, so a repeated record over-reports drops.
+   */
+  meta?: DropCounters;
   sdkVersion: string;
   newFingerprints: ReadonlySet<string>;
   /** Fingerprints currently suppressed (§7.1) — their exemplars are dropped, counts are kept. */
   isSuppressed?: (fingerprint: string) => boolean;
+  /** Raw log lines for this envelope — never folded; one `log` item each. */
+  logs?: readonly LogEntry[];
 }): Envelope {
   const items: EnvelopeItem[] = [];
   const suppressed = input.isSuppressed ?? (() => false);
@@ -45,7 +78,11 @@ export function buildEnvelope(input: {
     });
   }
 
-  items.push({ type: "meta", priority: 3, payload: input.meta });
+  for (const log of input.logs ?? []) {
+    items.push({ type: "log", priority: priorityForLog(log.level), payload: log });
+  }
+
+  if (input.meta) items.push({ type: "meta", priority: 3, payload: input.meta });
 
   return { sentAt: new Date().toISOString(), sdkVersion: input.sdkVersion, items };
 }

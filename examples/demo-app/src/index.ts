@@ -1,5 +1,5 @@
-import express from "express";
 import { init } from "@bugbusterhq/sdk-node";
+import { buildApp } from "./app.js";
 
 /**
  * A minimal instrumented service — the manual-testing target for the whole pipeline. See
@@ -13,32 +13,11 @@ const bugbuster = init({
   environment: "development",
 });
 
-const app = express();
+const { app, bb } = buildApp(bugbuster);
 
-app.get("/", (_req, res) => {
-  res.send("BugBuster demo-app is running. Try GET /throw or GET /throw-slow.");
-});
-
-app.get("/throw", (_req, res) => {
-  try {
-    throw new Error("simulated PaymentTimeout for manual testing");
-  } catch (err) {
-    bugbuster.captureException(err);
-    res.status(500).send("captured and reported");
-  }
-});
-
-app.get("/throw-slow", (_req, res) => {
-  const start = Date.now();
-  setTimeout(() => {
-    try {
-      throw new Error("simulated slow request timeout");
-    } catch (err) {
-      bugbuster.captureException(err, { release: "1.0.0" });
-      res.status(500).send(`captured after ${Date.now() - start}ms`);
-    }
-  }, 50);
-});
+// Opt in to shipping console.log/info/debug/warn/error output as log lines (console.error and
+// console.warn are always hooked for exception capture; `logs: true` adds the rest).
+bb.instrumentConsole({ logs: true });
 
 const port = Number(process.env.PORT ?? 3000);
 const server = app.listen(port, () => {

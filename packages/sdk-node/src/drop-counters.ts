@@ -2,12 +2,15 @@ import type { DropCounters } from "@bugbusterhq/types";
 
 /**
  * "Drop counters are sacred" (ingest-pipeline.md §3.4) — mutable, process-local, read by the
- * worker when it builds each batch's "meta" envelope item. `reset()` is called only after a
- * successful flush, so a slow flush cycle never silently under-reports drops that happened
- * while it was in flight.
+ * worker when it builds each batch's "meta" envelope item. Counters are only consumed after a
+ * successful send, so a failed flush never loses them.
  */
 export interface DropCountersHandle extends DropCounters {
-  reset(): void;
+  /**
+   * Subtracts a snapshot that was just sent successfully. Not a reset to zero: drops counted while
+   * that send was in flight survive into the next report instead of being zeroed unreported.
+   */
+  consume(sent: DropCounters): void;
 }
 
 export function createDropCounters(): DropCountersHandle {
@@ -18,11 +21,12 @@ export function createDropCounters(): DropCountersHandle {
     bufferHighWaterBytes: 0,
     selfCpuPct: 0,
     configVersion: 0,
-    reset() {
-      this.droppedBufferFull = 0;
-      this.droppedQuota = 0;
-      this.sampledOut = 0;
-      this.bufferHighWaterBytes = 0;
+    consume(sent) {
+      this.droppedBufferFull = Math.max(0, this.droppedBufferFull - sent.droppedBufferFull);
+      this.droppedQuota = Math.max(0, this.droppedQuota - sent.droppedQuota);
+      this.sampledOut = Math.max(0, this.sampledOut - sent.sampledOut);
+      // A high-water mark, not a sum: it restarts only if nothing exceeded it since the snapshot.
+      if (this.bufferHighWaterBytes <= sent.bufferHighWaterBytes) this.bufferHighWaterBytes = 0;
     },
   };
 }

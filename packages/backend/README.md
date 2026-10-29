@@ -21,6 +21,18 @@ is which database a connection handle even points at, not application discipline
 directly in `test/integration/cross-org-isolation.test.ts`, including an assertion on the actual
 resolved `dbName`, not just "org B's data didn't appear in the response."
 
+## Logs
+
+`POST /ingest` also stores `log` items (one document per line, validated, idempotent on `logId`), and
+`GET /logs` / `GET /logs/facets` serve them — see [`docs/api.md`](../../docs/api.md). Logs are the one
+data type that grows without bound, so retention is configuration:
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `BUGBUSTER_LOG_RETENTION_DAYS` | `7` | Days to keep log lines. A MongoDB TTL index expires them on the server's receive time. `0` keeps logs forever. |
+
+Changing it takes effect on existing data the next time a process starts — no migration.
+
 ## MongoDB schema
 
 See [`docs/schema.md`](../../docs/schema.md) for the full reference. Short version: one

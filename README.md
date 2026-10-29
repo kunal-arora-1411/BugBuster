@@ -17,6 +17,20 @@ alerts — are the documented scale-up path, not yet built. See
 [`docs/architecture/ingest-pipeline.md`](docs/architecture/ingest-pipeline.md) §10 for exactly
 what triggers building each one.
 
+## Errors *and* normal logs
+
+Two kinds of telemetry travel the same pipeline, treated oppositely on purpose:
+
+- **Errors are folded.** Identical errors collapse into one issue with a count.
+- **Logs are not.** `client.log.info("order placed", { orderId })` is stored as its own line —
+  searchable by text, level, service, environment, and time, with a live tail. For a log, the
+  individual line is the record.
+
+They meet at the **trace id**: a request's logs carry the same id as the errors it raised, so a
+developer can go from an issue's example to *every line that request wrote* in one click — without
+asking whoever runs the infrastructure. Logs are kept for `BUGBUSTER_LOG_RETENTION_DAYS` (default 7).
+See [`packages/sdk-node`](packages/sdk-node/README.md#logs) and [`docs/api.md`](docs/api.md).
+
 ## Why it's built this way
 
 Read these before touching the code — they're the reasoning behind every design choice below,
@@ -43,7 +57,7 @@ the architecture diagram:
 | [`packages/sdk-node`](packages/sdk-node) | The instrumentation SDK. Lives inside a customer's Node process; owns the hot path (<5µs budget), fingerprinting, and the in-process fold. |
 | [`packages/agent`](packages/agent) | The required host-local daemon (v1). SDK talks to it over a Unix domain socket; it's the only thing that makes the network hop to the backend. |
 | [`packages/backend`](packages/backend) | Ingest edge + processing + Query API. Resolves each request to its organization's own MongoDB database before touching any data. |
-| [`packages/dashboard`](packages/dashboard) | Minimal read-only issue viewer against the Query API — no build step, single HTML file. |
+| [`packages/dashboard`](packages/dashboard) | Minimal read-only viewer (issues and logs) against the Query API — no build step, single HTML file. |
 | [`examples/demo-app`](examples/demo-app) | A small Express app instrumented with `sdk-node`, plus the genuine end-to-end test wiring every component together for real. |
 
 ## Getting started
@@ -136,6 +150,7 @@ pnpm dev
 ```bash
 curl http://localhost:3000/throw
 curl http://localhost:3000/throw   # again — folds into the SAME issue, count becomes 2
+curl http://localhost:3000/orders/42   # a normal request — logged, not folded
 ```
 
 ### 6. See it
@@ -147,7 +162,7 @@ cd packages/dashboard
 pnpm dev
 ```
 
-Open **http://localhost:5173**, enter:
+Open **http://localhost:5173** (Issues and Logs tabs), enter:
 - Backend URL: `http://localhost:8080`
 - API key: `demo-api-key`
 

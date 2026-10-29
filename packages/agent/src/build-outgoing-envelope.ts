@@ -4,6 +4,7 @@ import type {
   Envelope,
   EnvelopeItem,
   FoldDelta,
+  LogEntry,
   Priority,
 } from "@bugbusterhq/types";
 
@@ -39,6 +40,11 @@ export interface PrioritizedExemplar {
   payload: BugBusterEvent;
 }
 
+export interface PrioritizedLog {
+  priority: Priority;
+  payload: LogEntry;
+}
+
 /**
  * Builds the Agent's outgoing (already cross-process-folded) envelope for one flush window.
  *
@@ -53,6 +59,12 @@ export function buildOutgoingEnvelope(input: {
   exemplars: readonly PrioritizedExemplar[];
   meta: readonly DropCounters[];
   agentVersion: string;
+  /**
+   * Raw log lines for this envelope. Unlike folds, logs are never merged across processes — a
+   * line is its own record — so the Agent just forwards them, preserving each line's priority.
+   * The caller bounds how many go in one envelope (see UdsServer.flush).
+   */
+  logs?: readonly PrioritizedLog[];
 }): Envelope {
   const items: EnvelopeItem[] = [];
 
@@ -65,6 +77,9 @@ export function buildOutgoingEnvelope(input: {
   }
   for (const exemplar of input.exemplars) {
     items.push({ type: "exemplar", priority: exemplar.priority, payload: exemplar.payload });
+  }
+  for (const log of input.logs ?? []) {
+    items.push({ type: "log", priority: log.priority, payload: log.payload });
   }
   items.push({ type: "meta", priority: 3, payload: mergeDropCounters(input.meta) });
 

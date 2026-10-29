@@ -1,5 +1,6 @@
 import { BackendConfigSchema } from "@bugbusterhq/types";
 import { ControlDb } from "./db/control.js";
+import { parseLogRetentionDays } from "./env.js";
 import { buildServer } from "./build-server.js";
 
 export { ControlDb, hashApiKey } from "./db/control.js";
@@ -8,6 +9,7 @@ export { buildServer } from "./build-server.js";
 export * from "./db/collections/issues.js";
 export * from "./db/collections/events.js";
 export * from "./db/collections/deploys.js";
+export * from "./db/collections/logs.js";
 
 export async function startBackend(rawConfig: unknown): Promise<{ close: () => Promise<void> }> {
   const config = BackendConfigSchema.parse(rawConfig);
@@ -31,6 +33,7 @@ if (process.argv[1]?.endsWith("index.js")) {
   startBackend({
     controlDbUri: process.env.BUGBUSTER_CONTROL_DB_URI ?? "mongodb://localhost:27017",
     port: Number(process.env.PORT ?? 8080),
+    logRetentionDays: parseLogRetentionDays(process.env.BUGBUSTER_LOG_RETENTION_DAYS),
   }).catch((err: unknown) => {
     console.error(err);
     process.exit(1);

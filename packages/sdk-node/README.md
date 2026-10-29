@@ -33,6 +33,66 @@ client.captureMessage("something worth knowing, not an error");
 await client.shutdown();
 ```
 
+## Logs
+
+Normal application logs — not just errors — stored line by line and searchable in the dashboard:
+
+```ts
+client.log.info("order placed", { orderId: "o_1042", total: 129.5 });
+client.log.warn("slow query", { table: "invoices", durationMs: 2431 });
+client.log.error("payment failed", { reason: err.message });   // also: client.log.debug(...)
+```
+
+Unlike exceptions, a log is **never fingerprinted or folded** — `"user logged in"` ten thousand
+times is ten thousand lines, because the line is the record. What logs share with the error path:
+the same hot path (never blocks, never throws, drop-and-count), the same redaction, the same Agent
+hop, and the same **trace id** — so a log written during a request carries the id of that request,
+and the dashboard can jump from an error's example to every line that request wrote.
+
+| Behaviour | Detail |
+|---|---|
+| `minLogLevel` | Default `"info"`. Lower levels are discarded at the very top of the hot path (one integer compare), so `debug` calls are free in production. |
+| Separate buffer | Logs have their own byte-capped ring (`logBufferBytes`, default 4 MB). A burst of `info` lines can never evict an exception. |
+| Redaction | Messages get the pattern scrub (emails, bearer tokens, card-like numbers). `fields` are additionally redacted **by key name** (`password`, `token`, `secret`, `authorization`, `apiKey`, `cookie`, ...) at any depth. |
+| Bounded `fields` | Depth 4, 50 keys/object, 50 array items, 1 KB strings, 16 KB total; circular refs, `BigInt`, `Error`, `Date`, `Map`/`Set` and throwing getters are handled and never throw. |
+| Batching | A flush window is split into batches under `flushMaxBatchBytes` so one busy window can't exceed the backend's request limit; the error path always rides the first batch. |
+| Sampling | The backend's per-type `log` sample rate is obeyed independently of errors. |
+| Mutation | `fields` is shallow-copied at call time; nested objects are read at flush time (within ~5 s), so don't mutate them after logging. |
+
+### Logs from Express
+
+```ts
+const bb = createExpressIntegration(client, {
+  logRequests: { ignorePaths: ["/healthz"] },   // one access-log line per request
+});
+app.use(bb.requestHandler);                      // mount first
+bb.instrumentConsole({ logs: true });            // also ship console.log/info/debug/warn/error
+bb.log.info("order placed", { orderId });        // same API as client.log, trace-aware
+```
+
+Both are **opt-in** because they decide how much of what your app prints leaves the process.
+`logRequests` writes `GET /orders/42 200 12ms` with `{ method, path, route, status, durationMs,
+requestId }` — 2xx/3xx at `info`, 4xx `warn`, 5xx `error`; **query strings are never logged**.
+`instrumentConsole({ logs: true })` is in addition to (not instead of) the existing exception capture
+from `console.error` / `console.warn`, and always still calls the original console method.
+
+### Already using pino or winston?
+
+```ts
+import { createLogStream } from "@bugbusterhq/sdk-node";
+
+const logger = pino(createLogStream(client));                       // pino: any writable works as a destination
+const logger = winston.createLogger({                               // winston: via its Stream transport
+  format: winston.format.json(),
+  transports: [new winston.transports.Stream({ stream: createLogStream(client) })],
+});
+```
+
+No changes to your existing `logger.info(...)` calls. It understands both shapes (pino's numeric
+`level` and `msg`, winston's string `level` and `message`); everything else on the line becomes
+`fields`. Cost note: it `JSON.parse`s each line in the logger's call stack — the price of accepting
+an already-serialized line; `client.log.*` avoids it.
+
 ## Framework integrations
 
 Auto-instrumentation for Express (or any Connect-style `(req, res, next)` framework), so a host

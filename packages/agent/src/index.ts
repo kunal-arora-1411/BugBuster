@@ -9,7 +9,11 @@ export { AgentHttpClient, AgentHttpClientError } from "./http-client.js";
 export { DiskSpool } from "./spool.js";
 export { UdsServer } from "./uds-server.js";
 export { mergeFoldDeltas } from "./merge-fold-deltas.js";
-export { buildOutgoingEnvelope, mergeDropCounters } from "./build-outgoing-envelope.js";
+export {
+  buildOutgoingEnvelope,
+  mergeDropCounters,
+  type PrioritizedLog,
+} from "./build-outgoing-envelope.js";
 
 export async function startAgent(rawConfig: unknown): Promise<UdsServer> {
   const config = AgentConfigSchema.parse(rawConfig);

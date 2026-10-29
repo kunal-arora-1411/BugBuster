@@ -11,13 +11,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No `version:` here on purpose: pnpm/action-setup reads it from package.json's
+      # "packageManager" field, and errors if both are set. One source of truth.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
+      # Node 22, not 20: the Agent compresses with Node's built-in zstd (node:zlib's
+      # zstdCompressSync, added in Node 22.15) and the backend decompresses with it. On Node 20
+      # those calls don't exist and the agent/backend tests fail with "zstdCompressSync is not a
+      # function".
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
@@ -35,4 +39,19 @@ jobs:
       # No external MongoDB service needed: mongodb-memory-server downloads and runs its own
       # real mongod binary per test file. Slower on a cold cache (first run downloads it), but
       # self-contained — the same command works identically on a contributor's machine.
+      #
+      # The binary is fetched ONCE here, before the tests: on a cold cache every test file starts
+      # a MongoMemoryServer at the same moment, they all download into the same path, and the
+      # losers fail with "ENOENT ... rename ...tgz.downloading". Cached across runs as well.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Download mongod for mongodb-memory-server
+        working-directory: packages/backend
+        run: >-
+          node --input-type=module -e "import { MongoMemoryServer } from 'mongodb-memory-server';
+          const s = await MongoMemoryServer.create(); await s.stop();"
+
       - run: pnpm test:integration

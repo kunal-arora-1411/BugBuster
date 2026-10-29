@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { BugBusterEventSchema } from "./event.js";
 import { FoldDeltaSchema } from "./issue.js";
+import { LogEntrySchema } from "./log.js";
 
 /**
  * Priority byte stamped on every envelope item (ingest-pipeline.md §8.2's shed ladder), so the
@@ -46,6 +47,9 @@ export const EnvelopeItemSchema = z.discriminatedUnion("type", [
     payload: BugBusterEventSchema,
   }),
   z.object({ type: z.literal("meta"), priority: PrioritySchema, payload: DropCountersSchema }),
+  // A raw, un-folded log line (see log.ts). Priority follows the shed ladder above: debug 0,
+  // info 1, warn/error 3 — so under pressure the edge sheds chatter before anything that matters.
+  z.object({ type: z.literal("log"), priority: PrioritySchema, payload: LogEntrySchema }),
 ]);
 export type EnvelopeItem = z.infer<typeof EnvelopeItemSchema>;
 

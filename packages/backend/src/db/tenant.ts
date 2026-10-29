@@ -2,6 +2,8 @@ import type { Db, MongoClient } from "mongodb";
 import { ensureIssuesIndexes } from "./collections/issues.js";
 import { ensureEventsIndexes } from "./collections/events.js";
 import { ensureDeploysIndexes } from "./collections/deploys.js";
+import { ensureLogsIndexes } from "./collections/logs.js";
+import { DEFAULT_LOG_RETENTION_DAYS } from "@bugbusterhq/types";
 
 /**
  * Resolves a `dbName` (already looked up via ControlDb — never a raw org name or API key) to a
@@ -13,7 +15,14 @@ import { ensureDeploysIndexes } from "./collections/deploys.js";
 export class TenantDbResolver {
   private readonly ensuredIndexes = new Set<string>();
 
-  constructor(private readonly client: MongoClient) {}
+  private readonly logRetentionDays: number;
+
+  constructor(
+    private readonly client: MongoClient,
+    options: { logRetentionDays?: number } = {},
+  ) {
+    this.logRetentionDays = options.logRetentionDays ?? DEFAULT_LOG_RETENTION_DAYS;
+  }
 
   async forOrgDb(dbName: string): Promise<Db> {
     const db = this.client.db(dbName);
@@ -22,6 +31,7 @@ export class TenantDbResolver {
         ensureIssuesIndexes(db),
         ensureEventsIndexes(db),
         ensureDeploysIndexes(db),
+        ensureLogsIndexes(db, { retentionDays: this.logRetentionDays }),
       ]);
       this.ensuredIndexes.add(dbName);
     }

@@ -193,7 +193,10 @@ export function decodeIssuesCursor(raw: string): IssuesCursor | undefined {
  * pins `(lastSeen, fingerprint)` together and pages strictly "further down that same order,"
  * rather than risking a skipped or repeated row across pages at equal timestamps.
  */
-export async function listIssues(db: Db, opts: { limit?: number; cursor?: IssuesCursor } = {}): Promise<IssuesPage> {
+export async function listIssues(
+  db: Db,
+  opts: { limit?: number; cursor?: IssuesCursor } = {},
+): Promise<IssuesPage> {
   const limit = opts.limit ?? 50;
   const filter = opts.cursor
     ? {
@@ -215,7 +218,10 @@ export async function listIssues(db: Db, opts: { limit?: number; cursor?: Issues
   const last = page[page.length - 1];
   return {
     issues: page.map(toPublicIssue),
-    nextCursor: hasMore && last ? encodeIssuesCursor({ lastSeen: last.lastSeen, fingerprint: last.fingerprint }) : undefined,
+    nextCursor:
+      hasMore && last
+        ? encodeIssuesCursor({ lastSeen: last.lastSeen, fingerprint: last.fingerprint })
+        : undefined,
   };
 }
 
