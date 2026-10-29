@@ -39,4 +39,19 @@ jobs:
       # No external MongoDB service needed: mongodb-memory-server downloads and runs its own
       # real mongod binary per test file. Slower on a cold cache (first run downloads it), but
       # self-contained — the same command works identically on a contributor's machine.
+      #
+      # The binary is fetched ONCE here, before the tests: on a cold cache every test file starts
+      # a MongoMemoryServer at the same moment, they all download into the same path, and the
+      # losers fail with "ENOENT ... rename ...tgz.downloading". Cached across runs as well.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Download mongod for mongodb-memory-server
+        working-directory: packages/backend
+        run: >-
+          node --input-type=module -e "import { MongoMemoryServer } from 'mongodb-memory-server';
+          const s = await MongoMemoryServer.create(); await s.stop();"
+
       - run: pnpm test:integration
