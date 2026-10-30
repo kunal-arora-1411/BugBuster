@@ -22,8 +22,6 @@ import {
  * from them, or if the committed copy is stale.
  */
 
-const HOSTED_URL = "https://backend-kunal-arora-1411s-projects.vercel.app";
-
 /** zod → JSON Schema (2020-12-compatible, which is what OpenAPI 3.1 uses), inlined, no `$schema`. */
 function schemaOf(schema: Parameters<typeof zodToJsonSchema>[0]): Record<string, unknown> {
   const { $schema: _ignored, ...rest } = zodToJsonSchema(schema, {
@@ -73,21 +71,22 @@ export function buildOpenApiDocument(): Record<string, unknown> {
       version: "1",
       description:
         "Ingest and Query API of the BugBuster backend.\n\n" +
-        "Every route except `/openapi.json` and `/docs` needs your organization's API key as " +
-        "`Authorization: Bearer <apiKey>`. The key decides which organization's database a request " +
-        "reads or writes — there is no way to address another organization's data.\n\n" +
+        "Every route except `/openapi.json`, `/docs` and the admin routes needs your " +
+        "organization's API key as `Authorization: Bearer <apiKey>`. The key decides which " +
+        "organization's database a request reads or writes — there is no way to address another " +
+        "organization's data. Admin routes take the backend's `BUGBUSTER_ADMIN_TOKEN` instead.\n\n" +
         "You normally never call `POST /ingest` yourself: the SDK (`@bugbusterhq/sdk-node`) or the " +
         "Agent does. The `GET` routes are what the dashboard uses, and are safe to script against.",
     },
-    servers: [
-      { url: HOSTED_URL, description: "Hosted" },
-      { url: "http://localhost:8080", description: "Local development" },
-    ],
+    // Only a local default here: every deployment is someone's own. The copy a backend serves at
+    // /openapi.json additionally lists itself ("/") first.
+    servers: [{ url: "http://localhost:8080", description: "Local development" }],
     security: [{ bearerAuth: [] }],
     tags: [
       { name: "Issues", description: "Folded errors: one issue per fingerprint." },
       { name: "Logs", description: "Application log lines, stored one by one." },
       { name: "Ingest", description: "Where the SDK and Agent send data." },
+      { name: "Admin", description: "Operator-only: needs the backend's admin token." },
       { name: "Meta", description: "This API description." },
     ],
     paths: {
@@ -344,6 +343,68 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           },
         },
       },
+      "/admin/orgs": {
+        post: {
+          tags: ["Admin"],
+          operationId: "createOrg",
+          summary: "Create an organization and its API key",
+          description:
+            "Creates the organization (its data goes to its own database, " +
+            "`bugbuster_org_<orgId>`) and returns its new API key. **The key is shown only in " +
+            "this response**: only a hash is stored, so it can't be retrieved later.\n\n" +
+            "Needs the backend's `BUGBUSTER_ADMIN_TOKEN` as the bearer token. When the backend " +
+            "has no admin token configured, this route answers `404`.",
+          security: [{ adminToken: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["orgId", "name"],
+                  properties: {
+                    orgId: {
+                      type: "string",
+                      pattern: "^[a-z0-9][a-z0-9_-]{0,39}$",
+                      description: "Permanent id; also names the org's database.",
+                    },
+                    name: { type: "string", minLength: 1, maxLength: 200 },
+                  },
+                },
+                example: { orgId: "acme", name: "Acme Corp" },
+              },
+            },
+          },
+          responses: {
+            "201": json(
+              {
+                type: "object",
+                required: ["orgId", "name", "dbName", "apiKey"],
+                properties: {
+                  orgId: { type: "string" },
+                  name: { type: "string" },
+                  dbName: { type: "string" },
+                  apiKey: {
+                    type: "string",
+                    description: "Give this to the organization. It is not shown again.",
+                  },
+                },
+              },
+              "Created.",
+            ),
+            "400": errorResponse("`orgId` or `name` is invalid.", "name must be 1-200 characters"),
+            "401": errorResponse("Missing or wrong admin token.", "invalid admin token"),
+            "404": errorResponse(
+              "Admin routes are disabled (no admin token configured).",
+              "not found",
+            ),
+            "409": errorResponse(
+              "The orgId, or its database name, is already taken.",
+              "an org with this id or database already exists",
+            ),
+          },
+        },
+      },
       "/openapi.json": {
         get: {
           tags: ["Meta"],
@@ -370,6 +431,11 @@ export function buildOpenApiDocument(): Record<string, unknown> {
     },
     components: {
       securitySchemes: {
+        adminToken: {
+          type: "http",
+          scheme: "bearer",
+          description: "The backend's BUGBUSTER_ADMIN_TOKEN. Only for admin routes.",
+        },
         bearerAuth: {
           type: "http",
           scheme: "bearer",

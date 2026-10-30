@@ -1,9 +1,9 @@
 import { ControlDb } from "./db/control.js";
 
 /**
- * Admin CLI — creates one org in the control database. There is no HTTP endpoint for this yet
- * (see docs/api.md's "Not yet built"); at pilot scale (a handful of orgs, created rarely), a CLI
- * run by whoever's operating the backend is the honest v1 answer, not a speculative admin API.
+ * Admin CLI — creates one org in the control database, with a caller-chosen dbName and API key.
+ * Needs direct database access but no admin token. The HTTP equivalent is `POST /admin/orgs`
+ * (enabled by BUGBUSTER_ADMIN_TOKEN), which derives the dbName and generates the key itself.
  *
  * Usage: node dist/create-org-cli.js <orgId> <name> <dbName> <apiKey> [controlDbUri]
  */

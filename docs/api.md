@@ -189,12 +189,23 @@ server's time.
 Retention: lines older than `BUGBUSTER_LOG_RETENTION_DAYS` (default 7; `0` = keep forever) are
 deleted by a MongoDB TTL index on the server's receive time.
 
+## `POST /admin/orgs`
+
+Creates an organization and returns its API key. Authorized by the backend's
+`BUGBUSTER_ADMIN_TOKEN` (`Authorization: Bearer <adminToken>`), not by an org key — and when no
+admin token is configured, the route answers `404` as if it didn't exist.
+
+- **Body:** `{ "orgId": "acme", "name": "Acme Corp" }` — `orgId` matches `^[a-z0-9][a-z0-9_-]{0,39}$`
+  and becomes the database name `bugbuster_org_<orgId>`.
+- **`201`:** `{ "orgId", "name", "dbName", "apiKey" }` with `Cache-Control: no-store`. The key is
+  generated server-side and **returned only here**; only its SHA-256 is stored.
+- **`400`** invalid body · **`401`** missing/wrong admin token · **`409`** the `orgId` or its
+  database name is already used by another org (two orgs must never share a database).
+
 ## Not yet built
 
 - Searching inside structured `fields` (e.g. `?field.orderId=o_1042`) — fields are stored as real
   sub-documents with Mongo-safe keys, so this is a query addition, not a schema change.
-- Any write/management endpoints (creating orgs, rotating API keys) — `ControlDb.createOrg` exists
-  as an admin/test helper only, not exposed over HTTP. This is a considered v1 choice, not an
-  oversight (see `packages/backend/src/create-org-cli.ts`): at pilot scale, org creation is rare
-  enough that a CLI run by whoever operates the backend is the honest answer, not a speculative
-  admin API surface with its own auth model to secure and maintain.
+- Rotating or revoking an API key over HTTP. Creating one is possible (`POST /admin/orgs`, below);
+  replacing one needs the in-process auth cache (`ingest/edge.ts`, which never expires an entry) to
+  expire or be invalidated first, or an old key would keep working on every warm instance.

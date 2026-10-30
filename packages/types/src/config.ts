@@ -91,5 +91,11 @@ export const BackendConfigSchema = z.object({
    * that if you are managing disk some other way).
    */
   logRetentionDays: z.number().int().nonnegative().default(DEFAULT_LOG_RETENTION_DAYS),
+  /**
+   * Secret that authorizes the admin routes (`POST /admin/orgs`). Unset = those routes don't exist
+   * (404), which is the default: a deployment that never sets it exposes no admin surface at all.
+   * At least 32 characters, because it is the one credential that can mint new tenants.
+   */
+  adminToken: z.string().min(32, "adminToken must be at least 32 characters").optional(),
 });
 export type BackendConfig = z.infer<typeof BackendConfigSchema>;

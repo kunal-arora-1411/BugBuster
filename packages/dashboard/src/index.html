@@ -363,7 +363,7 @@
   const $ = (id) => document.getElementById(id);
 
   // Per-viewer convenience only — never shared, never read by anything but this browser.
-  $("backendUrl").value = localStorage.getItem("bb_backend_url") || "https://backend-kunal-arora-1411s-projects.vercel.app";
+  $("backendUrl").value = localStorage.getItem("bb_backend_url") || "http://localhost:8080";
   $("apiKey").value = localStorage.getItem("bb_api_key") || "";
 
   let nextCursor = undefined;
