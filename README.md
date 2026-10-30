@@ -6,6 +6,9 @@ they ever touch the network. A 50,000-event error storm becomes a handful of agg
 plus a few full-fidelity exemplars, computed where the storm is happening, not after it's already
 cost you the bandwidth.
 
+BugBuster is **self-hosted**: you run the backend (a Node service plus MongoDB) yourself, and your
+applications report to it through the npm SDK.
+
 ![BugBuster error telemetry architecture — capture, process, store, analyze, resolve](docs/architecture/error-telemetry-architecture.png)
 
 Solid-outlined boxes are built and running today (v1); dashed boxes — Kafka/Redpanda, sketch
@@ -15,10 +18,10 @@ yet ([`ingest-pipeline.md`](docs/architecture/ingest-pipeline.md) §10 says what
 **Contents**
 
 - [How it fits together](#how-it-fits-together)
-- [Using BugBuster in your app](#using-bugbuster-in-your-app) — get a key, install the SDK, the code
+- [Self-hosting the backend](#self-hosting-the-backend) — run it, configure it, create organizations
+- [Using BugBuster in your app](#using-bugbuster-in-your-app) — install the SDK, the code
 - [Deploying: the Agent and where your app runs](#deploying-the-agent-and-where-your-app-runs) — the DevOps part
-- [Seeing your data](#seeing-your-data) — dashboard and API
-- [Operating the backend](#operating-the-backend) — for whoever runs the hosted service
+- [Seeing your data](#seeing-your-data) — dashboard and API (Swagger UI at `/docs`)
 - [Releasing the npm packages](#releasing-the-npm-packages)
 - [Developing BugBuster locally](#developing-bugbuster-locally)
 - [Repo map and design docs](#repo-map-and-design-docs)
@@ -50,8 +53,95 @@ They meet at the **trace id**: every log line written during a request carries t
 errors that request raised, so the dashboard jumps from an error straight to everything that
 request logged.
 
-**The hosted backend** is at **`https://backend-kunal-arora-1411s-projects.vercel.app`**
-(ingest endpoint: `…/ingest`).
+Throughout this README, **`https://bugbuster.example.com`** stands for wherever *you* deploy the
+backend.
+
+---
+
+## Self-hosting the backend
+
+You need **Node.js ≥ 22.15** (the backend uses Node's built-in zstd) and a **MongoDB**: a free
+[MongoDB Atlas](https://www.mongodb.com/cloud/atlas) cluster, your own server, or
+`docker compose -f infra/docker-compose.yml up -d` for a local one.
+
+### Configuration
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `BUGBUSTER_CONTROL_DB_URI` | — | MongoDB connection string. Holds `bugbuster_control` (orgs + API keys) and one `bugbuster_org_*` database per org. The Vercel entry point also accepts `MONGODB_URI` (what Vercel's MongoDB integration sets). |
+| `PORT` | `8080` | HTTP port (ignored on Vercel). |
+| `BUGBUSTER_LOG_RETENTION_DAYS` | `7` | Days to keep log lines (TTL index on receive time). `0` = keep forever. Blank = default. |
+| `BUGBUSTER_ADMIN_TOKEN` | unset | Enables `POST /admin/orgs` (create organizations and API keys over HTTP). At least 32 characters: generate one with `openssl rand -hex 32`. **Unset = the admin route doesn't exist (404).** |
+
+Keep the MongoDB URI and the admin token in your platform's secret settings, never in the repo. On
+Atlas, allowlist the backend's egress IPs (on Vercel that usually means `0.0.0.0/0` plus a strong
+database password).
+
+### Option A — any Node host
+
+```bash
+pnpm install && pnpm build
+cd packages/backend
+BUGBUSTER_CONTROL_DB_URI="mongodb+srv://..." BUGBUSTER_ADMIN_TOKEN="..." PORT=8080 pnpm start
+```
+
+Run it under a process manager (systemd, PM2, a container) and put it behind TLS: a reverse proxy
+or your platform's load balancer. Agents and SDKs should only ever reach it over HTTPS.
+
+### Option B — Vercel
+
+The backend's Vercel entry point is [`packages/backend/app.ts`](packages/backend/app.ts), with
+[`packages/backend/vercel.json`](packages/backend/vercel.json) building the shared types first.
+Point a Vercel project's root directory at `packages/backend`, set the env vars above, and deploy.
+
+Connect the Vercel project to your Git repository so `main` deploys automatically; otherwise run
+`vercel deploy --prod` after merging backend changes.
+
+### Check that it's up
+
+```bash
+API=https://bugbuster.example.com
+curl $API/issues                                   # {"error":"missing bearer token"}
+curl -o /dev/null -w '%{http_code}\n' $API/logs     # 401 (a 404 means a build older than logs)
+```
+
+Then open `$API/docs` for the interactive API reference (Swagger UI).
+
+### Creating an organization
+
+Every application reports into an **organization**, and each organization's data lives in its own
+MongoDB database (`bugbuster_org_<orgId>`), chosen from its API key before any query runs. Create
+one per team or customer.
+
+**Over HTTP** (needs `BUGBUSTER_ADMIN_TOKEN` set on the backend):
+
+```bash
+curl -X POST https://bugbuster.example.com/admin/orgs \
+  -H "Authorization: Bearer $BUGBUSTER_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"orgId": "acme", "name": "Acme Corp"}'
+```
+
+```json
+{ "orgId": "acme", "name": "Acme Corp", "dbName": "bugbuster_org_acme", "apiKey": "bb_…" }
+```
+
+**The API key appears only in this response.** Only its hash is stored, so copy it now and hand it
+over through a secure channel. `orgId` is permanent: lowercase letters, digits, `-` and `_`, up to
+40 characters. A taken id returns `409`.
+
+**Or with the CLI**, from a checkout with access to the database (no admin token needed):
+
+```bash
+pnpm install && pnpm build
+cd packages/backend
+BUGBUSTER_CONTROL_DB_URI="mongodb+srv://..." \
+  pnpm create-org <orgId> "<Org name>" bugbuster_org_<orgId> "$(openssl rand -hex 24)"
+```
+
+Treat API keys like passwords. There is no rotation or revocation route yet: to replace a
+compromised key, create a new organization, or replace the org's `apiKeyHash` in the
+`bugbuster_control.orgs` collection and restart the backend (keys are cached per process).
 
 ---
 
@@ -59,10 +149,9 @@ request logged.
 
 ### 1. Get an API key
 
-There is no self-serve signup yet. Ask the BugBuster maintainers for an organization; they create
-it (see [Creating an organization](#creating-an-organization)) and give you an **API key**. That
-key identifies your org on every request — treat it like a password: keep it in an environment
-variable or your secret manager, never in source control.
+Create an organization on your backend (see [Creating an organization](#creating-an-organization))
+and take its **API key**. That key identifies your org on every request. Treat it like a password:
+keep it in an environment variable or your secret manager, never in source control.
 
 ### 2. Install the SDK
 
@@ -87,7 +176,7 @@ export const bugbuster = init({
   release: process.env.GIT_SHA,                  // optional but recommended: ties issues to deploys
 
   // Only needed when this app runs WITHOUT an Agent (serverless/PaaS — see "Deploying" below):
-  backendUrl: "https://backend-kunal-arora-1411s-projects.vercel.app/ingest",
+  backendUrl: process.env.BUGBUSTER_BACKEND_URL,   // e.g. https://bugbuster.example.com/ingest
 });
 ```
 
@@ -202,7 +291,7 @@ const logger = pino(createLogStream(bugbuster));
 // winston: new winston.transports.Stream({ stream: createLogStream(bugbuster) })
 ```
 
-Logs are kept for 7 days by default (set by the backend operator).
+Logs are kept for 7 days by default (`BUGBUSTER_LOG_RETENTION_DAYS` on the backend).
 
 ### 7. Flush on shutdown
 
@@ -241,7 +330,7 @@ corepack if missing.
 curl -fsSL https://raw.githubusercontent.com/kunal-arora-1411/BugBuster/main/packages/agent/scripts/install.sh \
   | sudo bash -s -- \
     --api-key "$BUGBUSTER_API_KEY" \
-    --backend-url https://backend-kunal-arora-1411s-projects.vercel.app/ingest
+    --backend-url https://bugbuster.example.com/ingest
 ```
 
 This builds the Agent from source into `/opt/bugbuster/source` and installs it as the systemd
@@ -288,6 +377,7 @@ freezes the process between invocations — otherwise buffered data may never be
 | Variable | Used by | Example |
 |---|---|---|
 | `BUGBUSTER_API_KEY` | your app (`apiKey`) and the Agent installer | from your secret manager |
+| `BUGBUSTER_BACKEND_URL` | your app (`backendUrl`, direct mode only) | `https://bugbuster.example.com/ingest` |
 | `GIT_SHA` / your CI's commit var | your app (`release`) | `9f2c1e7` |
 | `NODE_ENV` | your app (`environment`) | `production` |
 
@@ -299,8 +389,8 @@ freezes the process between invocations — otherwise buffered data may never be
 
 The dashboard is a single HTML file with no build step:
 [`packages/dashboard/src/index.html`](packages/dashboard/src/index.html). Open it in a browser (or
-run `pnpm --filter @bugbusterhq/dashboard dev` and go to <http://localhost:5173>). The backend URL
-is pre-filled with the hosted backend; paste your **API key**.
+run `pnpm --filter @bugbusterhq/dashboard dev` and go to <http://localhost:5173>). Enter your
+backend's URL (it defaults to `http://localhost:8080`) and your **API key**.
 
 - **Issues** — every error type with its count, users affected, durations, top endpoints and
   example events (with stack traces). A badge shows whether the count is exact or sampled.
@@ -313,80 +403,17 @@ Your API key is stored only in that browser's `localStorage` and sent only to th
 
 ```bash
 KEY=$BUGBUSTER_API_KEY
-API=https://backend-kunal-arora-1411s-projects.vercel.app
+API=https://bugbuster.example.com
 
 curl -H "Authorization: Bearer $KEY" "$API/issues?limit=20"
 curl -H "Authorization: Bearer $KEY" "$API/issues/<fingerprint>/exemplars"
 curl -H "Authorization: Bearer $KEY" "$API/logs?level=error&q=payment&limit=50"
 ```
 
-Full reference: [`docs/api.md`](docs/api.md).
-
----
-
-## Operating the backend
-
-For whoever runs the hosted service.
-
-### Configuration
-
-| Env var | Default | Meaning |
-|---|---|---|
-| `BUGBUSTER_CONTROL_DB_URI` | — | MongoDB connection string. Holds `bugbuster_control` (orgs + API keys) and one `bugbuster_org_*` database per org. The Vercel entry point also accepts `MONGODB_URI` (what Vercel's MongoDB integration sets). |
-| `PORT` | `8080` | HTTP port (ignored on Vercel). |
-| `BUGBUSTER_LOG_RETENTION_DAYS` | `7` | Days to keep log lines (TTL index on receive time). `0` = keep forever. Blank = default. |
-
-MongoDB Atlas works well; allowlist the backend's egress IPs (on Vercel that usually means
-`0.0.0.0/0` plus a strong password) and never commit the URI.
-
-### Deploying to Vercel
-
-The backend's Vercel entry point is [`packages/backend/app.ts`](packages/backend/app.ts), with
-[`packages/backend/vercel.json`](packages/backend/vercel.json) building the shared types first.
-Point a Vercel project's root directory at `packages/backend`, set the env vars above, and deploy.
-
-**The Vercel project is not connected to this GitHub repo** (no deployments are reported back to
-GitHub) — so merging to `main` does *not* redeploy it. After merging backend changes, redeploy the
-`backend` project from the Vercel dashboard, or with the CLI from its linked directory:
-
-```bash
-vercel deploy --prod
-```
-
-Connecting the project to the repo under *Vercel → Project → Settings → Git* makes `main` deploy
-automatically.
-
-Check it afterwards: `curl $API/issues` should return `{"error":"missing bearer token"}`, and
-`curl -o /dev/null -w '%{http_code}' $API/logs` should return `401` (a `404` means the deployed
-build predates application logs).
-
-### Self-hosting elsewhere
-
-Any Node ≥ 22.15 host works (zstd decompression needs it):
-
-```bash
-pnpm install && pnpm build
-cd packages/backend
-BUGBUSTER_CONTROL_DB_URI="mongodb+srv://..." PORT=8080 pnpm start
-```
-
-Put it behind TLS (a reverse proxy or your platform's load balancer); Agents should only ever talk
-to it over HTTPS.
-
-### Creating an organization
-
-From a checkout of this repo, with access to the production database:
-
-```bash
-pnpm install && pnpm build
-cd packages/backend
-BUGBUSTER_CONTROL_DB_URI="mongodb+srv://..." \
-  pnpm create-org <orgId> "<Org name>" bugbuster_org_<orgId> "$(openssl rand -hex 24)"
-```
-
-Arguments: `orgId`, display name, the org's own database name, and its API key. Hand the API key
-to the customer over a secure channel. Each org's data lives in its own database, resolved from the
-key before any query runs.
+Every backend also serves interactive docs at **`/docs`** (Swagger UI: click *Authorize*, paste a
+key, then *Try it out*) and the OpenAPI 3.1 document at `/openapi.json`. A copy is committed at
+[`docs/openapi.json`](docs/openapi.json) for Postman or client generators; the prose reference is
+[`docs/api.md`](docs/api.md).
 
 ---
 

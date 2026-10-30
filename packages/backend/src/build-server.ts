@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { zstdDecompressSync } from "node:zlib";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import type { BackendConfig, ResolvedOrg } from "@bugbusterhq/types";
@@ -18,6 +19,7 @@ import { getExemplarsByIds } from "./db/collections/events.js";
 import { decodeLogsCursor, getLogFacets, queryLogs, type LogQuery } from "./db/collections/logs.js";
 import { attachFidelity } from "./query/fidelity.js";
 import { computeDirectives } from "./directives.js";
+import { buildOpenApiDocument, SWAGGER_UI_HTML } from "./openapi.js";
 
 const CONFIG_VERSION = 1;
 const DEFAULT_ISSUES_LIMIT = 50;
@@ -25,6 +27,15 @@ const MAX_ISSUES_LIMIT = 200;
 const DEFAULT_LOGS_LIMIT = 100;
 const MAX_LOGS_LIMIT = 500;
 const FACETS_CACHE_MS = 60_000;
+/** An org id becomes part of a MongoDB database name, so it is kept to a safe, short alphabet. */
+const ORG_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,39}$/;
+const MAX_ORG_NAME_CHARS = 200;
+
+/** Constant-time comparison (hashing first makes the lengths equal, as timingSafeEqual needs). */
+function tokensMatch(given: string, expected: string): boolean {
+  const digest = (s: string) => createHash("sha256").update(s).digest();
+  return timingSafeEqual(digest(given), digest(expected));
+}
 
 /** A query-string value is a string only if the caller sent exactly one; repeats arrive as arrays. */
 function singleString(value: unknown): string | undefined {
@@ -119,7 +130,7 @@ async function requireOrg(
 export function registerRoutes(
   app: FastifyInstance,
   controlDb: ControlDb,
-  options: { logRetentionDays?: number } = {},
+  options: { logRetentionDays?: number; adminToken?: string } = {},
 ): void {
   const tenants = new TenantDbResolver(controlDb.getClient(), {
     logRetentionDays: options.logRetentionDays,
@@ -150,6 +161,61 @@ export function registerRoutes(
   app.options("/*", async (_request, reply) => {
     reply.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     await reply.code(204).send();
+  });
+
+  // API docs — public on purpose (no org data in them), so they sit outside requireOrg. The served
+  // copy lists "this server" first, so Swagger UI's "Try it out" hits whichever backend you opened.
+  const openApiDocument = buildOpenApiDocument();
+  const servedOpenApi = {
+    ...openApiDocument,
+    servers: [{ url: "/", description: "This server" }, ...(openApiDocument.servers as unknown[])],
+  };
+  app.get("/openapi.json", async (_request, reply) => {
+    await reply.send(servedOpenApi);
+  });
+  app.get("/docs", async (_request, reply) => {
+    await reply.type("text/html; charset=utf-8").send(SWAGGER_UI_HTML);
+  });
+
+  // ---- Admin ----------------------------------------------------------------------------------
+
+  // Creates an organization and returns its API key (once — only the hash is stored). Authorized by
+  // BUGBUSTER_ADMIN_TOKEN, a separate secret from any org's API key. With no admin token
+  // configured the route answers 404, exactly like a route that doesn't exist.
+  app.post<{ Body: unknown }>("/admin/orgs", async (request, reply) => {
+    const adminToken = options.adminToken;
+    if (!adminToken) {
+      await reply.code(404).send({ error: "not found" });
+      return;
+    }
+    const given = extractBearerToken(request.headers.authorization);
+    if (!given || !tokensMatch(given, adminToken)) {
+      await reply.code(401).send({ error: "invalid admin token" });
+      return;
+    }
+
+    const body = (request.body ?? {}) as { orgId?: unknown; name?: unknown };
+    if (typeof body.orgId !== "string" || !ORG_ID_PATTERN.test(body.orgId)) {
+      await reply.code(400).send({
+        error: "orgId must be 1-40 characters: lowercase letters, digits, '-' or '_'",
+      });
+      return;
+    }
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (name.length === 0 || name.length > MAX_ORG_NAME_CHARS) {
+      await reply.code(400).send({ error: `name must be 1-${MAX_ORG_NAME_CHARS} characters` });
+      return;
+    }
+
+    const result = await controlDb.createOrgWithGeneratedKey({ orgId: body.orgId, name });
+    if (!result.created) {
+      await reply.code(409).send({ error: "an org with this id or database already exists" });
+      return;
+    }
+    const { created: _created, ...org } = result;
+    // The key is in this response and nowhere else; nothing in between may keep a copy.
+    reply.header("Cache-Control", "no-store");
+    await reply.code(201).send(org);
   });
 
   // NDJSON bodies pass through without any JSON parsing here — see ingest/edge.ts's v1 nuance on
@@ -298,6 +364,9 @@ export function registerRoutes(
 
 export function buildServer(config: BackendConfig, controlDb: ControlDb): FastifyInstance {
   const app = Fastify({ bodyLimit: config.ingestMaxBodyBytes });
-  registerRoutes(app, controlDb, { logRetentionDays: config.logRetentionDays });
+  registerRoutes(app, controlDb, {
+    logRetentionDays: config.logRetentionDays,
+    adminToken: config.adminToken,
+  });
   return app;
 }

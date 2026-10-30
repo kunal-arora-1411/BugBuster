@@ -12,3 +12,11 @@ export function parseLogRetentionDays(raw: string | undefined): number | undefin
   if (raw === undefined || raw.trim() === "") return undefined;
   return Number(raw);
 }
+
+/**
+ * Reads BUGBUSTER_ADMIN_TOKEN. Blank counts as unset for the same reason as above — and here unset
+ * is the safe direction: it disables the admin routes instead of accepting an empty token.
+ */
+export function parseAdminToken(raw: string | undefined): string | undefined {
+  return raw === undefined || raw.trim() === "" ? undefined : raw.trim();
+}

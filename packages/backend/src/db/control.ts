@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { MongoClient } from "mongodb";
 import type { OrgRecord, ResolvedOrg } from "@bugbusterhq/types";
 
@@ -62,6 +62,37 @@ export class ControlDb {
   async resolveApiKey(apiKey: string): Promise<ResolvedOrg | undefined> {
     const org = await this.orgs().findOne({ apiKeyHash: hashApiKey(apiKey) });
     return org ? { orgId: org.orgId, dbName: org.dbName } : undefined;
+  }
+
+  /**
+   * Creates an org with a freshly generated API key and returns that key — the only time it is
+   * ever available in plain text (only its hash is stored). The org's database is derived from
+   * its id, and refused if ANY existing org already uses it: two orgs sharing a database would
+   * break tenant isolation, and orgs created by the CLI choose their database name freely.
+   *
+   * The existence check and the insert are not atomic. That is acceptable for an operation only
+   * an operator holding the admin token can call; the unique `orgId` index still rejects the
+   * same id raced twice.
+   */
+  async createOrgWithGeneratedKey(input: {
+    orgId: string;
+    name: string;
+  }): Promise<
+    | { created: true; orgId: string; name: string; dbName: string; apiKey: string }
+    | { created: false }
+  > {
+    const dbName = `bugbuster_org_${input.orgId}`;
+    if (await this.orgs().findOne({ $or: [{ orgId: input.orgId }, { dbName }] })) {
+      return { created: false };
+    }
+    const apiKey = `bb_${randomBytes(32).toString("base64url")}`;
+    try {
+      await this.createOrg({ orgId: input.orgId, name: input.name, dbName, apiKey });
+    } catch (err) {
+      if ((err as { code?: number }).code === 11000) return { created: false };
+      throw err;
+    }
+    return { created: true, orgId: input.orgId, name: input.name, dbName, apiKey };
   }
 
   /** Admin/test helper — not part of the ingest or query request paths. */

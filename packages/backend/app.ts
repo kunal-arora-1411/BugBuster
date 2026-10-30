@@ -11,18 +11,22 @@
 import Fastify from "fastify";
 import { BackendConfigSchema } from "@bugbusterhq/types";
 import { ControlDb } from "./src/db/control.js";
-import { parseLogRetentionDays } from "./src/env.js";
+import { parseAdminToken, parseLogRetentionDays } from "./src/env.js";
 import { registerRoutes } from "./src/build-server.js";
 
 const config = BackendConfigSchema.parse({
   controlDbUri: process.env.BUGBUSTER_CONTROL_DB_URI ?? process.env.MONGODB_URI,
   port: Number(process.env.PORT ?? 8080),
   logRetentionDays: parseLogRetentionDays(process.env.BUGBUSTER_LOG_RETENTION_DAYS),
+  adminToken: parseAdminToken(process.env.BUGBUSTER_ADMIN_TOKEN),
 });
 
 const controlDb = new ControlDb(config.controlDbUri);
 await controlDb.connect();
 
 const fastify = Fastify({ bodyLimit: config.ingestMaxBodyBytes });
-registerRoutes(fastify, controlDb, { logRetentionDays: config.logRetentionDays });
+registerRoutes(fastify, controlDb, {
+  logRetentionDays: config.logRetentionDays,
+  adminToken: config.adminToken,
+});
 fastify.listen({ port: config.port, host: "0.0.0.0" });
