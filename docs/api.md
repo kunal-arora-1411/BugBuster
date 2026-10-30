@@ -1,5 +1,11 @@
 # Query API Reference
 
+> **Interactive docs:** every backend serves Swagger UI at **`/docs`** and the OpenAPI 3.1 document
+> at **`/openapi.json`** (no API key needed for either). A copy is committed at
+> [`openapi.json`](openapi.json) for Postman, Insomnia, or client generators — import it directly.
+> After changing a route, regenerate it with `pnpm build && pnpm --filter @bugbusterhq/backend
+> openapi`; a unit test fails if it's stale or a route is undocumented.
+
 Implemented in `packages/backend/src/server.ts`. Every route requires
 `Authorization: Bearer <apiKey>`; a missing or unrecognized key returns `401` before any tenant
 database is touched (see [`schema.md`](schema.md) on why that ordering is the actual isolation

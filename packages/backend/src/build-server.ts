@@ -18,6 +18,7 @@ import { getExemplarsByIds } from "./db/collections/events.js";
 import { decodeLogsCursor, getLogFacets, queryLogs, type LogQuery } from "./db/collections/logs.js";
 import { attachFidelity } from "./query/fidelity.js";
 import { computeDirectives } from "./directives.js";
+import { buildOpenApiDocument, SWAGGER_UI_HTML } from "./openapi.js";
 
 const CONFIG_VERSION = 1;
 const DEFAULT_ISSUES_LIMIT = 50;
@@ -150,6 +151,20 @@ export function registerRoutes(
   app.options("/*", async (_request, reply) => {
     reply.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     await reply.code(204).send();
+  });
+
+  // API docs — public on purpose (no org data in them), so they sit outside requireOrg. The served
+  // copy lists "this server" first, so Swagger UI's "Try it out" hits whichever backend you opened.
+  const openApiDocument = buildOpenApiDocument();
+  const servedOpenApi = {
+    ...openApiDocument,
+    servers: [{ url: "/", description: "This server" }, ...(openApiDocument.servers as unknown[])],
+  };
+  app.get("/openapi.json", async (_request, reply) => {
+    await reply.send(servedOpenApi);
+  });
+  app.get("/docs", async (_request, reply) => {
+    await reply.type("text/html; charset=utf-8").send(SWAGGER_UI_HTML);
   });
 
   // NDJSON bodies pass through without any JSON parsing here — see ingest/edge.ts's v1 nuance on
