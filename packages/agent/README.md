@@ -34,9 +34,10 @@ SDK(s) on this host --UDS--> UdsServer --merge--> AgentHttpClient --HTTPS--> bac
   each fingerprint so a "never-shed" signal from any one service survives the merge.
 - **Log forwarding** (`uds-server.ts`) — `log` items are forwarded as-is, *never* folded (a line is its
   own record), in batches capped at 512 KB so an outbound request can't exceed the backend's size
-  limit. The Agent bounds its own memory: past `maxPendingLogs` (default 50,000) it sheds debug/info
-  first and keeps warn/error up to twice that, and every shed line is counted into the drop counters
-  sent upstream — never silently lost.
+  limit. The Agent bounds its own memory: past `maxPendingLogs` (default 50,000 lines) or
+  `maxPendingLogBytes` (default 64 MB), whichever comes first, it sheds debug/info first and keeps
+  warn/error up to twice that, and every shed line is counted into the drop counters sent upstream —
+  never silently lost.
 - **TLS, retries, the circuit breaker** (`http-client.ts`, `circuit-breaker.ts`) — bounded jittered
   retries (5xx/network only, never 4xx), and a CLOSED/OPEN/HALF-OPEN breaker so a dead backend is
   failed against instantly rather than attempted per batch.
