@@ -1,6 +1,6 @@
 {
   "name": "@bugbusterhq/agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The required host-local BugBuster daemon (v1) — cross-process fold merging, disk spool, and the only thing that makes the HTTPS hop to the backend.",
   "publishConfig": {
     "access": "public"

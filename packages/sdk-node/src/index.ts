@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import type { Envelope, LogEntry, ServiceContext } from "@bugbusterhq/types";
 import { SdkConfigSchema, type SdkConfig } from "@bugbusterhq/types";
 import { RingBuffer } from "./ring-buffer.js";
@@ -32,7 +33,11 @@ export {
 export { createLogApi, type LogApi, type LogFields } from "./logger.js";
 export { createLogStream, type LogStreamOptions } from "./integrations/log-stream.js";
 
-const SDK_VERSION = "0.0.0";
+// Read from this package's own package.json (one level up from both src/ and dist/) so the version
+// the backend sees can never drift from the version that was published.
+const SDK_VERSION: string = (
+  createRequire(import.meta.url)("../package.json") as { version: string }
+).version;
 
 export interface BugBusterClient extends CaptureEngine {
   /**

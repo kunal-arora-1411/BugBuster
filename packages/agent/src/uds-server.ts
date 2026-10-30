@@ -1,5 +1,6 @@
 import { createServer, type Server, type Socket } from "node:net";
 import { existsSync, unlinkSync } from "node:fs";
+import { createRequire } from "node:module";
 import type {
   BugBusterEvent,
   DropCounters,
@@ -17,7 +18,11 @@ import {
 import type { AgentHttpClient } from "./http-client.js";
 import type { DiskSpool } from "./spool.js";
 
-const AGENT_VERSION = "0.0.0";
+// Read from this package's own package.json (one level up from both src/ and dist/) so the version
+// the backend sees can never drift from the version that was published.
+const AGENT_VERSION: string = (
+  createRequire(import.meta.url)("../package.json") as { version: string }
+).version;
 
 // Logs are the first item type whose volume is not bounded by fingerprint cardinality, so the
 // Agent — a long-lived daemon every service on the host funnels through — must bound them itself.
