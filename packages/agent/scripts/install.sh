@@ -55,11 +55,11 @@ done
 [ "$(id -u)" -eq 0 ] || fail "Must run as root (try: sudo $0 ...)"
 [ -n "$API_KEY" ] || fail "--api-key is required"
 [ -n "$BACKEND_URL" ] || fail "--backend-url is required"
-command -v node >/dev/null 2>&1 || fail "Node.js is required (>=20) and was not found on PATH"
+command -v node >/dev/null 2>&1 || fail "Node.js is required (>=22.15) and was not found on PATH"
 command -v git >/dev/null 2>&1 || fail "git is required and was not found on PATH"
 
-NODE_MAJOR="$(node -e 'console.log(process.versions.node.split(".")[0])')"
-[ "$NODE_MAJOR" -ge 20 ] || fail "Node.js >=20 required, found $(node -v)"
+# 22.15, not 20: the Agent compresses with node:zlib's built-in zstd, which older Nodes don't have.
+node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 15) ? 0 : 1)'   || fail "Node.js >=22.15 required (for built-in zstd), found $(node -v)"
 
 command -v pnpm >/dev/null 2>&1 || { log "pnpm not found — installing via corepack"; corepack enable && corepack prepare pnpm@latest --activate; }
 
@@ -72,8 +72,11 @@ else
 fi
 git -C "$INSTALL_DIR" checkout --detach "$COMMIT"
 
-log "Installing and building the Agent (and its @bugbuster/types dependency)"
-( cd "$INSTALL_DIR" && pnpm install --frozen-lockfile && pnpm --filter @bugbuster/types run build && pnpm --filter @bugbuster/agent run build )
+log "Installing and building the Agent (and its @bugbusterhq/types dependency)"
+# --fail-if-no-match: pnpm otherwise exits 0 when a filter matches nothing, which would skip the
+# build silently and leave the service crash-looping on a missing dist/index.js.
+( cd "$INSTALL_DIR" && pnpm install --frozen-lockfile   && pnpm --fail-if-no-match --filter @bugbusterhq/types run build   && pnpm --fail-if-no-match --filter @bugbusterhq/agent run build )
+[ -f "$INSTALL_DIR/packages/agent/dist/index.js" ] || fail "Agent build produced no dist/index.js"
 
 if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
   log "Creating system user '$SERVICE_USER'"
