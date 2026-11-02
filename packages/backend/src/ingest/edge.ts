@@ -28,6 +28,20 @@ export async function resolveOrgForRequest(
   return resolved;
 }
 
+/**
+ * Keeps this process's cached copies of an org in step after an admin change (other processes
+ * pick the change up from the control record when they next start; the change itself, such as a
+ * TTL index, is applied in the database for all of them at once).
+ */
+export function updateCachedOrg(orgId: string, patch: { logRetentionDays?: number }): void {
+  for (const [key, org] of orgCacheByApiKey) {
+    if (org.orgId !== orgId) continue;
+    const next: ResolvedOrg = { orgId: org.orgId, dbName: org.dbName };
+    if (patch.logRetentionDays !== undefined) next.logRetentionDays = patch.logRetentionDays;
+    orgCacheByApiKey.set(key, next);
+  }
+}
+
 /** Test-only: clears the process-local auth cache between isolated test runs. */
 export function _resetOrgCacheForTests(): void {
   orgCacheByApiKey.clear();

@@ -109,21 +109,44 @@ export async function upsertFoldDelta(db: Db, delta: FoldDelta): Promise<void> {
   }
 }
 
-/** Adds one exemplar reference, enforcing the ≤6-per-issue cap (ingest-pipeline.md §4.1). */
+/**
+ * Adds one exemplar reference, enforcing the ≤6-per-issue cap (ingest-pipeline.md §4.1), and says
+ * whether the issue keeps this exemplar: true when it was just added or was already recorded (a
+ * retried send), false when the issue is at its cap or does not exist. The caller stores the event
+ * itself only when this returns true, so an exemplar nobody will ever show is never written.
+ *
+ * One conditional update, not a read then a write: two concurrent sends could otherwise both see
+ * five references and both push, and the cap would not hold.
+ */
 export async function addExemplarRef(
   db: Db,
   fingerprint: string,
   ref: ExemplarRef,
   maxExemplars = 6,
-): Promise<void> {
-  const doc = await issuesCollection(db).findOne(
-    { fingerprint },
-    { projection: { exemplarRefs: 1 } },
+): Promise<boolean> {
+  const result = await issuesCollection(db).updateOne(
+    {
+      fingerprint,
+      "exemplarRefs.eventId": { $ne: ref.eventId },
+      [`exemplarRefs.${maxExemplars - 1}`]: { $exists: false }, // fewer than maxExemplars so far
+    },
+    { $push: { exemplarRefs: ref } },
   );
-  const existing = doc?.exemplarRefs ?? [];
-  if (existing.some((e) => e.eventId === ref.eventId)) return; // already recorded
-  if (existing.length >= maxExemplars) return; // at cap — the 7th (and beyond) is not stored
-  await issuesCollection(db).updateOne({ fingerprint }, { $push: { exemplarRefs: ref } });
+  if (result.modifiedCount === 1) return true;
+  const alreadyRecorded = await issuesCollection(db).countDocuments(
+    { fingerprint, "exemplarRefs.eventId": ref.eventId },
+    { limit: 1 },
+  );
+  return alreadyRecorded > 0;
+}
+
+/** Undoes addExemplarRef when the event it points at could not be stored. */
+export async function removeExemplarRef(
+  db: Db,
+  fingerprint: string,
+  eventId: string,
+): Promise<void> {
+  await issuesCollection(db).updateOne({ fingerprint }, { $pull: { exemplarRefs: { eventId } } });
 }
 
 function percentile(sorted: number[], p: number): number {

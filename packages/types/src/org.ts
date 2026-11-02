@@ -12,6 +12,11 @@ export const OrgRecordSchema = z.object({
   dbName: z.string().min(1),
   apiKeyHash: z.string().min(1),
   createdAt: z.string().datetime(),
+  /**
+   * This org's log retention in days, overriding the backend's BUGBUSTER_LOG_RETENTION_DAYS.
+   * Absent = the backend default; 0 = keep forever.
+   */
+  logRetentionDays: z.number().int().nonnegative().optional(),
 });
 export type OrgRecord = z.infer<typeof OrgRecordSchema>;
 
@@ -23,5 +28,7 @@ export type OrgRecord = z.infer<typeof OrgRecordSchema>;
 export const ResolvedOrgSchema = z.object({
   orgId: z.string().min(1),
   dbName: z.string().min(1),
+  /** Only when the org overrides the backend's default retention. */
+  logRetentionDays: z.number().int().nonnegative().optional(),
 });
 export type ResolvedOrg = z.infer<typeof ResolvedOrgSchema>;

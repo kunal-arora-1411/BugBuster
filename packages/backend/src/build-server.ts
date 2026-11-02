@@ -12,12 +12,13 @@ import {
 } from "@bugbusterhq/types";
 import type { ControlDb } from "./db/control.js";
 import { TenantDbResolver } from "./db/tenant.js";
-import { extractBearerToken, resolveOrgForRequest } from "./ingest/edge.js";
+import { extractBearerToken, resolveOrgForRequest, updateCachedOrg } from "./ingest/edge.js";
 import { processEnvelope } from "./ingest/processor.js";
 import { decodeIssuesCursor, getIssue, listIssues } from "./db/collections/issues.js";
 import { getExemplarsByIds } from "./db/collections/events.js";
 import { decodeLogsCursor, getLogFacets, queryLogs, type LogQuery } from "./db/collections/logs.js";
 import { attachFidelity } from "./query/fidelity.js";
+import { orgStorageReport } from "./db/storage-report.js";
 import { computeDirectives } from "./directives.js";
 import { buildOpenApiDocument, SWAGGER_UI_HTML } from "./openapi.js";
 
@@ -30,6 +31,23 @@ const FACETS_CACHE_MS = 60_000;
 /** An org id becomes part of a MongoDB database name, so it is kept to a safe, short alphabet. */
 const ORG_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 const MAX_ORG_NAME_CHARS = 200;
+const MAX_RETENTION_DAYS = 3650;
+const RETENTION_ERROR = `logRetentionDays must be a whole number from 0 (keep forever) to ${MAX_RETENTION_DAYS}`;
+
+/** undefined when absent, null when explicitly cleared (if allowed), "invalid" otherwise wrong. */
+function parseRetentionDays(
+  value: unknown,
+  opts: { allowNull: boolean },
+): number | null | undefined | "invalid" {
+  if (value === undefined) return undefined;
+  if (value === null) return opts.allowNull ? null : "invalid";
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= MAX_RETENTION_DAYS
+    ? value
+    : "invalid";
+}
 
 /** Constant-time comparison (hashing first makes the lengths equal, as timingSafeEqual needs). */
 function tokensMatch(given: string, expected: string): boolean {
@@ -159,7 +177,7 @@ export function registerRoutes(
   // onSend hook above never gets a chance to help: it decorates a response, but there's no
   // matched route to send one from.
   app.options("/*", async (_request, reply) => {
-    reply.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    reply.header("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
     await reply.code(204).send();
   });
 
@@ -179,22 +197,31 @@ export function registerRoutes(
 
   // ---- Admin ----------------------------------------------------------------------------------
 
-  // Creates an organization and returns its API key (once — only the hash is stored). Authorized by
-  // BUGBUSTER_ADMIN_TOKEN, a separate secret from any org's API key. With no admin token
-  // configured the route answers 404, exactly like a route that doesn't exist.
-  app.post<{ Body: unknown }>("/admin/orgs", async (request, reply) => {
+  // Every admin route is authorized by BUGBUSTER_ADMIN_TOKEN, a separate secret from any org's API
+  // key. With no admin token configured they answer 404, exactly like routes that don't exist.
+  async function requireAdmin(request: FastifyRequest, reply: FastifyReply): Promise<boolean> {
     const adminToken = options.adminToken;
     if (!adminToken) {
       await reply.code(404).send({ error: "not found" });
-      return;
+      return false;
     }
     const given = extractBearerToken(request.headers.authorization);
     if (!given || !tokensMatch(given, adminToken)) {
       await reply.code(401).send({ error: "invalid admin token" });
-      return;
+      return false;
     }
+    return true;
+  }
 
-    const body = (request.body ?? {}) as { orgId?: unknown; name?: unknown };
+  // Creates an organization and returns its API key (once — only the hash is stored).
+  app.post<{ Body: unknown }>("/admin/orgs", async (request, reply) => {
+    if (!(await requireAdmin(request, reply))) return;
+
+    const body = (request.body ?? {}) as {
+      orgId?: unknown;
+      name?: unknown;
+      logRetentionDays?: unknown;
+    };
     if (typeof body.orgId !== "string" || !ORG_ID_PATTERN.test(body.orgId)) {
       await reply.code(400).send({
         error: "orgId must be 1-40 characters: lowercase letters, digits, '-' or '_'",
@@ -206,8 +233,17 @@ export function registerRoutes(
       await reply.code(400).send({ error: `name must be 1-${MAX_ORG_NAME_CHARS} characters` });
       return;
     }
+    const retention = parseRetentionDays(body.logRetentionDays, { allowNull: false });
+    if (retention === "invalid") {
+      await reply.code(400).send({ error: RETENTION_ERROR });
+      return;
+    }
 
-    const result = await controlDb.createOrgWithGeneratedKey({ orgId: body.orgId, name });
+    const result = await controlDb.createOrgWithGeneratedKey({
+      orgId: body.orgId,
+      name,
+      ...(typeof retention === "number" ? { logRetentionDays: retention } : {}),
+    });
     if (!result.created) {
       await reply.code(409).send({ error: "an org with this id or database already exists" });
       return;
@@ -216,6 +252,64 @@ export function registerRoutes(
     // The key is in this response and nowhere else; nothing in between may keep a copy.
     reply.header("Cache-Control", "no-store");
     await reply.code(201).send(org);
+  });
+
+  // Changes an org's settings. Today that is its log retention: a number of days (0 = keep
+  // forever) or null to go back to the backend's default. Applied to the org's TTL index at once,
+  // so it holds for every backend process, not only this one.
+  app.patch<{ Params: { orgId: string }; Body: unknown }>(
+    "/admin/orgs/:orgId",
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply))) return;
+      const body = (request.body ?? {}) as { logRetentionDays?: unknown };
+      const retention = parseRetentionDays(body.logRetentionDays, { allowNull: true });
+      if (retention === "invalid" || retention === undefined) {
+        await reply
+          .code(400)
+          .send({ error: RETENTION_ERROR + ", or null for the backend default" });
+        return;
+      }
+      const org = await controlDb.setLogRetention(request.params.orgId, retention);
+      if (!org) {
+        await reply.code(404).send({ error: "no such org" });
+        return;
+      }
+      const override =
+        org.logRetentionDays !== undefined ? { logRetentionDays: org.logRetentionDays } : {};
+      await tenants.applyLogRetention(org.dbName, override);
+      updateCachedOrg(org.orgId, override);
+      await reply.send({
+        orgId: org.orgId,
+        name: org.name,
+        dbName: org.dbName,
+        logRetentionDays: tenants.retentionFor(override),
+        retentionOverridden: org.logRetentionDays !== undefined,
+      });
+    },
+  );
+
+  // What each org's data costs in MongoDB: per-collection size on disk and in indexes, the
+  // compressor in use, log lines per day, and exemplars waiting for cleanup. `?orgId=` for one org.
+  app.get<{ Querystring: { orgId?: string } }>("/admin/storage", async (request, reply) => {
+    if (!(await requireAdmin(request, reply))) return;
+    const wanted = request.query.orgId;
+    const orgs = (await controlDb.listOrgs()).filter((o) => !wanted || o.orgId === wanted);
+    if (wanted && orgs.length === 0) {
+      await reply.code(404).send({ error: "no such org" });
+      return;
+    }
+    const client = controlDb.getClient();
+    const reports = [];
+    for (const org of orgs) {
+      reports.push(await orgStorageReport(client.db(org.dbName), org, tenants.retentionFor({})));
+    }
+    reports.sort((a, b) => b.totalBytes - a.totalBytes);
+    await reply.send({
+      generatedAt: new Date().toISOString(),
+      defaultLogRetentionDays: tenants.retentionFor({}),
+      totalBytes: reports.reduce((sum, r) => sum + r.totalBytes, 0),
+      orgs: reports,
+    });
   });
 
   // NDJSON bodies pass through without any JSON parsing here — see ingest/edge.ts's v1 nuance on
@@ -243,7 +337,7 @@ export function registerRoutes(
     const org = await requireOrg(request, reply, controlDb);
     if (!org) return;
 
-    const db = await tenants.forOrgDb(org.dbName);
+    const db = await tenants.forOrgDb(org.dbName, org);
     await processEnvelope(db, (request.body as Buffer | undefined) ?? Buffer.alloc(0));
 
     const directives = computeDirectives(CONFIG_VERSION);
@@ -277,7 +371,7 @@ export function registerRoutes(
         }
       }
 
-      const db = await tenants.forOrgDb(org.dbName);
+      const db = await tenants.forOrgDb(org.dbName, org);
       const page = await listIssues(db, { limit, cursor });
       await reply.send({ issues: page.issues.map(attachFidelity), nextCursor: page.nextCursor });
     },
@@ -287,7 +381,7 @@ export function registerRoutes(
     const org = await requireOrg(request, reply, controlDb);
     if (!org) return;
 
-    const db = await tenants.forOrgDb(org.dbName);
+    const db = await tenants.forOrgDb(org.dbName, org);
     const issue = await getIssue(db, request.params.fingerprint);
     if (!issue) {
       await reply.code(404).send({ error: "not found" });
@@ -305,7 +399,7 @@ export function registerRoutes(
       const org = await requireOrg(request, reply, controlDb);
       if (!org) return;
 
-      const db = await tenants.forOrgDb(org.dbName);
+      const db = await tenants.forOrgDb(org.dbName, org);
       const issue = await getIssue(db, request.params.fingerprint);
       if (!issue) {
         await reply.code(404).send({ error: "not found" });
@@ -340,7 +434,7 @@ export function registerRoutes(
       return;
     }
 
-    const db = await tenants.forOrgDb(org.dbName);
+    const db = await tenants.forOrgDb(org.dbName, org);
     const page = await queryLogs(db, parsed.query);
     await reply.send({ logs: page.logs, nextCursor: page.nextCursor });
   });
@@ -355,7 +449,7 @@ export function registerRoutes(
       await reply.send(cached.value);
       return;
     }
-    const db = await tenants.forOrgDb(org.dbName);
+    const db = await tenants.forOrgDb(org.dbName, org);
     const value = await getLogFacets(db);
     facetsCache.set(org.dbName, { at: Date.now(), value });
     await reply.send(value);

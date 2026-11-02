@@ -70,7 +70,7 @@ You need **Node.js ≥ 22.15** (the backend uses Node's built-in zstd) and a **M
 |---|---|---|
 | `BUGBUSTER_CONTROL_DB_URI` | — | MongoDB connection string. Holds `bugbuster_control` (orgs + API keys) and one `bugbuster_org_*` database per org. The Vercel entry point also accepts `MONGODB_URI` (what Vercel's MongoDB integration sets). |
 | `PORT` | `8080` | HTTP port (ignored on Vercel). |
-| `BUGBUSTER_LOG_RETENTION_DAYS` | `7` | Days to keep log lines (TTL index on receive time). `0` = keep forever. Blank = default. |
+| `BUGBUSTER_LOG_RETENTION_DAYS` | `7` | Default days to keep log lines (TTL index on receive time). `0` = keep forever. Blank = default. Each org can override it; see [Storage](#storage). |
 | `BUGBUSTER_ADMIN_TOKEN` | unset | Enables `POST /admin/orgs` (create organizations and API keys over HTTP). At least 32 characters: generate one with `openssl rand -hex 32`. **Unset = the admin route doesn't exist (404).** |
 
 Keep the MongoDB URI and the admin token in your platform's secret settings, never in the repo. On
@@ -142,6 +142,46 @@ BUGBUSTER_CONTROL_DB_URI="mongodb+srv://..." \
 Treat API keys like passwords. There is no rotation or revocation route yet: to replace a
 compromised key, create a new organization, or replace the org's `apiKeyHash` in the
 `bugbuster_control.orgs` collection and restart the backend (keys are cached per process).
+
+### Storage
+
+Everything lives in MongoDB, and what grows is bounded:
+
+- **Logs** are deleted after the retention period (7 days unless configured). Each org can have its
+  own: create it with `"logRetentionDays": 30`, or change it later. The change applies to that org's
+  data immediately; `null` returns it to the backend default and `0` keeps its logs forever.
+
+  ```bash
+  curl -X PATCH https://bugbuster.example.com/admin/orgs/acme \
+    -H "Authorization: Bearer $BUGBUSTER_ADMIN_TOKEN" -H "Content-Type: application/json" \
+    -d '{"logRetentionDays": 30}'
+  ```
+
+- **Issues** are one document per kind of error, however often it happens, and each keeps at most
+  six example events. Examples past that are not stored.
+- **New logs collections are compressed with zstd**, which stores repetitive log text in several
+  times less disk than MongoDB's default. A collection's compressor is fixed when it is created, so
+  orgs whose logs collection already existed keep the old one; the storage report shows which.
+
+**See what each org costs** before changing anything:
+
+```bash
+curl https://bugbuster.example.com/admin/storage -H "Authorization: Bearer $BUGBUSTER_ADMIN_TOKEN"
+```
+
+It lists, largest org first: documents, data size, size on disk and index size for logs, issues and
+example events; the compressor in use; log lines received per day for the last 7 days with their
+estimated size; and how many stored example events no issue uses (`?orgId=acme` for one org).
+
+**After upgrading from a backend older than this release**, remove the example events earlier
+versions stored but never showed. It only deletes events no issue references, is safe to re-run,
+and `--dry-run` just counts:
+
+```bash
+cd packages/backend
+BUGBUSTER_CONTROL_DB_URI="mongodb+srv://..." pnpm cleanup-events --dry-run
+BUGBUSTER_CONTROL_DB_URI="mongodb+srv://..." pnpm cleanup-events
+```
 
 ---
 
@@ -295,7 +335,8 @@ const logger = pino(createLogStream(bugbuster));
 // winston: new winston.transports.Stream({ stream: createLogStream(bugbuster) })
 ```
 
-Logs are kept for 7 days by default (`BUGBUSTER_LOG_RETENTION_DAYS` on the backend).
+Logs are kept for 7 days by default (`BUGBUSTER_LOG_RETENTION_DAYS` on the backend, or a per-org
+setting; see [Storage](#storage)).
 
 ### 7. Flush on shutdown
 

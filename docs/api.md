@@ -202,6 +202,50 @@ admin token is configured, the route answers `404` as if it didn't exist.
 - **`400`** invalid body · **`401`** missing/wrong admin token · **`409`** the `orgId` or its
   database name is already used by another org (two orgs must never share a database).
 
+`POST /admin/orgs` also accepts an optional `"logRetentionDays"` (0 to 3650; 0 keeps logs
+forever). Without it, the org uses the backend's `BUGBUSTER_LOG_RETENTION_DAYS`.
+
+## `PATCH /admin/orgs/:orgId`
+
+Changes an org's log retention. Admin token, as above.
+
+- **Body:** `{ "logRetentionDays": 30 }`: a whole number of days from 0 (keep forever) to 3650, or
+  `null` to go back to the backend default.
+- **Effect:** applied to the org's TTL index immediately, so it holds for every backend process.
+- **`200`:** `{ "orgId", "name", "dbName", "logRetentionDays", "retentionOverridden" }`, where
+  `logRetentionDays` is the retention now in effect.
+- **`400`** invalid body · **`401`** wrong admin token · **`404`** no such org, or admin disabled.
+
+## `GET /admin/storage`
+
+What each org stores, largest first. Admin token, as above. Read-only: it creates nothing, even
+for an org that has never sent data. `?orgId=acme` reports on one org.
+
+```json
+{
+  "generatedAt": "2026-11-03T10:00:00.000Z",
+  "defaultLogRetentionDays": 7,
+  "totalBytes": 48291840,
+  "orgs": [{
+    "orgId": "acme", "name": "Acme Corp", "dbName": "bugbuster_org_acme",
+    "logRetentionDays": 30, "retentionOverridden": true,
+    "collections": {
+      "logs":   { "documents": 412880, "dataBytes": 151027712, "storageBytes": 31981568, "indexBytes": 14958592, "compression": "zstd" },
+      "issues": { "documents": 37, "dataBytes": 61440, "storageBytes": 36864, "indexBytes": 73728, "compression": "snappy" },
+      "events": { "documents": 214, "dataBytes": 466944, "storageBytes": 172032, "indexBytes": 69632, "compression": "snappy" }
+    },
+    "totalBytes": 47292416,
+    "logsPerDay": [{ "date": "2026-10-28", "lines": 58210, "estimatedBytes": 21292032 }],
+    "unreferencedEvents": 0
+  }]
+}
+```
+
+`storageBytes` is what the documents take on disk after compression, `dataBytes` their size
+before it. `logsPerDay` covers the last 7 UTC days (shortened above). `unreferencedEvents` counts
+stored example events no issue uses; `pnpm --filter @bugbusterhq/backend cleanup-events` deletes
+them.
+
 ## Not yet built
 
 - Searching inside structured `fields` (e.g. `?field.orderId=o_1042`) — fields are stored as real

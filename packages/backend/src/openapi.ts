@@ -55,6 +55,26 @@ const cursorParam = {
   schema: { type: "string" },
 };
 
+const retentionDaysSchema = {
+  type: "integer",
+  minimum: 0,
+  maximum: 3650,
+  description:
+    "Days to keep this organization's log lines; 0 keeps them forever. Omit for the backend's default.",
+};
+
+const collectionStorageSchema = {
+  type: "object",
+  required: ["documents", "dataBytes", "storageBytes", "indexBytes"],
+  properties: {
+    documents: { type: "integer" },
+    dataBytes: { type: "integer", description: "Uncompressed size of the documents." },
+    storageBytes: { type: "integer", description: "Size on disk of the documents, compressed." },
+    indexBytes: { type: "integer", description: "Size on disk of the indexes." },
+    compression: { type: "string", description: "zstd, snappy, zlib or none." },
+  },
+};
+
 const fingerprintParam = {
   name: "fingerprint",
   in: "path",
@@ -369,6 +389,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
                       description: "Permanent id; also names the org's database.",
                     },
                     name: { type: "string", minLength: 1, maxLength: 200 },
+                    logRetentionDays: retentionDaysSchema,
                   },
                 },
                 example: { orgId: "acme", name: "Acme Corp" },
@@ -388,11 +409,18 @@ export function buildOpenApiDocument(): Record<string, unknown> {
                     type: "string",
                     description: "Give this to the organization. It is not shown again.",
                   },
+                  logRetentionDays: {
+                    type: "integer",
+                    description: "Present only when the org was created with its own retention.",
+                  },
                 },
               },
               "Created.",
             ),
-            "400": errorResponse("`orgId` or `name` is invalid.", "name must be 1-200 characters"),
+            "400": errorResponse(
+              "`orgId`, `name` or `logRetentionDays` is invalid.",
+              "name must be 1-200 characters",
+            ),
             "401": errorResponse("Missing or wrong admin token.", "invalid admin token"),
             "404": errorResponse(
               "Admin routes are disabled (no admin token configured).",
@@ -401,6 +429,77 @@ export function buildOpenApiDocument(): Record<string, unknown> {
             "409": errorResponse(
               "The orgId, or its database name, is already taken.",
               "an org with this id or database already exists",
+            ),
+          },
+        },
+      },
+      "/admin/orgs/{orgId}": {
+        patch: {
+          tags: ["Admin"],
+          operationId: "updateOrg",
+          summary: "Change an organization's log retention",
+          description:
+            "Sets how many days this organization's log lines are kept (`0` keeps them forever), " +
+            "or `null` to use the backend's `BUGBUSTER_LOG_RETENTION_DAYS` again. Applied to the " +
+            "organization's retention index immediately, for every backend process.",
+          security: [{ adminToken: [] }],
+          parameters: [{ name: "orgId", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["logRetentionDays"],
+                  properties: {
+                    logRetentionDays: { ...retentionDaysSchema, type: ["integer", "null"] },
+                  },
+                },
+                example: { logRetentionDays: 30 },
+              },
+            },
+          },
+          responses: {
+            "200": json(ref("OrgSettings"), "The organization's settings now."),
+            "400": errorResponse(
+              "`logRetentionDays` is missing or invalid.",
+              "logRetentionDays must be a whole number from 0 (keep forever) to 3650",
+            ),
+            "401": errorResponse("Missing or wrong admin token.", "invalid admin token"),
+            "404": errorResponse(
+              "No such organization, or admin routes are disabled.",
+              "no such org",
+            ),
+          },
+        },
+      },
+      "/admin/storage": {
+        get: {
+          tags: ["Admin"],
+          operationId: "getStorageReport",
+          summary: "How much each organization stores",
+          description:
+            "Per organization: documents, data size, size on disk and index size for logs, issues " +
+            "and example events; the compressor each uses; log lines received per day for the last " +
+            "7 days with their estimated size; and how many stored example events no issue " +
+            "references (removed by `pnpm --filter @bugbusterhq/backend cleanup-events`). " +
+            "Largest organization first. Read-only.",
+          security: [{ adminToken: [] }],
+          parameters: [
+            {
+              name: "orgId",
+              in: "query",
+              required: false,
+              description: "Report on this organization only.",
+              schema: { type: "string" },
+            },
+          ],
+          responses: {
+            "200": json(ref("StorageReport"), "The report."),
+            "401": errorResponse("Missing or wrong admin token.", "invalid admin token"),
+            "404": errorResponse(
+              "No such organization, or admin routes are disabled.",
+              "no such org",
             ),
           },
         },
@@ -480,6 +579,64 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           ...schemaOf(EnvelopeItemSchema),
         },
         SampleDirective: schemaOf(SampleDirectiveSchema),
+        OrgSettings: {
+          type: "object",
+          required: ["orgId", "name", "dbName", "logRetentionDays", "retentionOverridden"],
+          properties: {
+            orgId: { type: "string" },
+            name: { type: "string" },
+            dbName: { type: "string" },
+            logRetentionDays: { type: "integer", description: "The retention in effect." },
+            retentionOverridden: {
+              type: "boolean",
+              description: "False when the backend's default applies.",
+            },
+          },
+        },
+        StorageReport: {
+          type: "object",
+          required: ["generatedAt", "defaultLogRetentionDays", "totalBytes", "orgs"],
+          properties: {
+            generatedAt: { type: "string", format: "date-time" },
+            defaultLogRetentionDays: { type: "integer" },
+            totalBytes: { type: "integer", description: "Disk used by every organization listed." },
+            orgs: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  orgId: { type: "string" },
+                  name: { type: "string" },
+                  dbName: { type: "string" },
+                  logRetentionDays: { type: "integer" },
+                  retentionOverridden: { type: "boolean" },
+                  collections: {
+                    type: "object",
+                    properties: {
+                      logs: collectionStorageSchema,
+                      issues: collectionStorageSchema,
+                      events: collectionStorageSchema,
+                    },
+                  },
+                  totalBytes: { type: "integer", description: "Disk plus index bytes." },
+                  logsPerDay: {
+                    type: "array",
+                    description: "Last 7 UTC days, oldest first.",
+                    items: {
+                      type: "object",
+                      properties: {
+                        date: { type: "string", format: "date" },
+                        lines: { type: "integer" },
+                        estimatedBytes: { type: "integer" },
+                      },
+                    },
+                  },
+                  unreferencedEvents: { type: "integer" },
+                },
+              },
+            },
+          },
+        },
       },
     },
   };

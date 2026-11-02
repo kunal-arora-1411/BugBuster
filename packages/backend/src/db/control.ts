@@ -61,7 +61,39 @@ export class ControlDb {
 
   async resolveApiKey(apiKey: string): Promise<ResolvedOrg | undefined> {
     const org = await this.orgs().findOne({ apiKeyHash: hashApiKey(apiKey) });
-    return org ? { orgId: org.orgId, dbName: org.dbName } : undefined;
+    if (!org) return undefined;
+    return {
+      orgId: org.orgId,
+      dbName: org.dbName,
+      ...(org.logRetentionDays !== undefined ? { logRetentionDays: org.logRetentionDays } : {}),
+    };
+  }
+
+  /** Every org, without its key hash. For operator tooling, never for tenant request paths. */
+  async listOrgs(): Promise<Omit<OrgRecord, "apiKeyHash">[]> {
+    return this.orgs()
+      .find({}, { projection: { _id: 0, apiKeyHash: 0 } })
+      .sort({ orgId: 1 })
+      .toArray();
+  }
+
+  /**
+   * Sets (a number) or clears (null, back to the backend default) an org's log retention. Returns
+   * the org as stored afterwards, or undefined when there is no such org.
+   */
+  async setLogRetention(
+    orgId: string,
+    logRetentionDays: number | null,
+  ): Promise<Omit<OrgRecord, "apiKeyHash"> | undefined> {
+    const update =
+      logRetentionDays === null
+        ? { $unset: { logRetentionDays: "" as const } }
+        : { $set: { logRetentionDays } };
+    const org = await this.orgs().findOneAndUpdate({ orgId }, update, {
+      returnDocument: "after",
+      projection: { _id: 0, apiKeyHash: 0 },
+    });
+    return org ?? undefined;
   }
 
   /**
@@ -77,8 +109,16 @@ export class ControlDb {
   async createOrgWithGeneratedKey(input: {
     orgId: string;
     name: string;
+    logRetentionDays?: number;
   }): Promise<
-    | { created: true; orgId: string; name: string; dbName: string; apiKey: string }
+    | {
+        created: true;
+        orgId: string;
+        name: string;
+        dbName: string;
+        apiKey: string;
+        logRetentionDays?: number;
+      }
     | { created: false }
   > {
     const dbName = `bugbuster_org_${input.orgId}`;
@@ -87,12 +127,25 @@ export class ControlDb {
     }
     const apiKey = `bb_${randomBytes(32).toString("base64url")}`;
     try {
-      await this.createOrg({ orgId: input.orgId, name: input.name, dbName, apiKey });
+      await this.createOrg({
+        orgId: input.orgId,
+        name: input.name,
+        dbName,
+        apiKey,
+        logRetentionDays: input.logRetentionDays,
+      });
     } catch (err) {
       if ((err as { code?: number }).code === 11000) return { created: false };
       throw err;
     }
-    return { created: true, orgId: input.orgId, name: input.name, dbName, apiKey };
+    return {
+      created: true,
+      orgId: input.orgId,
+      name: input.name,
+      dbName,
+      apiKey,
+      ...(input.logRetentionDays !== undefined ? { logRetentionDays: input.logRetentionDays } : {}),
+    };
   }
 
   /** Admin/test helper — not part of the ingest or query request paths. */
@@ -101,6 +154,7 @@ export class ControlDb {
     name: string;
     dbName: string;
     apiKey: string;
+    logRetentionDays?: number;
   }): Promise<void> {
     await this.orgs().insertOne({
       orgId: input.orgId,
@@ -108,6 +162,7 @@ export class ControlDb {
       dbName: input.dbName,
       apiKeyHash: hashApiKey(input.apiKey),
       createdAt: new Date().toISOString(),
+      ...(input.logRetentionDays !== undefined ? { logRetentionDays: input.logRetentionDays } : {}),
     });
   }
 }
