@@ -4,426 +4,755 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BugBuster</title>
+<meta name="theme-color" content="#f2f5f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d0f10" media="(prefers-color-scheme: dark)">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script>
+  // Before first paint, so a dark-theme visitor never sees a white flash.
+  try { const t = localStorage.getItem("bb_theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (_) {}
+</script>
 <style>
+  /* ============================================================================================
+     Tokens. One tinted frame (sidebar) around one sheet that holds the work. Colour goes on data
+     and status, not on chrome: the accent marks the selected view, links into a trace and the
+     one primary action. Light and dark are the same system; dark is true neutral, not navy.
+     ============================================================================================ */
   :root {
-    color-scheme: light dark;
-    --bg: #f6f7f9;
-    --bg-elevated: #ffffff;
-    --border: #e2e4e9;
-    --text: #16181d;
-    --text-muted: #6b7280;
-    --text-faint: #9aa0ab;
-    --accent: #3b5bfd;
-    --accent-weak: #eef1ff;
-    --success: #0f9d58;
-    --success-weak: #e6f7ee;
-    --warning: #c2760a;
-    --warning-weak: #fdf3e3;
-    --danger: #d33b3b;
-    --row-hover: #f0f2f6;
-    --radius: 10px;
-    --radius-sm: 6px;
-    --shadow: 0 1px 2px rgba(16,20,30,0.04), 0 4px 16px rgba(16,20,30,0.03);
-    --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
-    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    color-scheme: light;
+    --frame: #f2f5f7;        /* blue-grey: an observability tool's chrome */
+    --sheet: #ffffff;
+    --raised: #f4f6f8;
+    --active: #e6eaed;
+    --border: #e3e7ea;
+    --rule: #eef1f3;
+    --control: #cdd2d6;
+    --text: #131416;
+    --muted: #5b6064;
+    --accent: #1b6c80;
+    --accent-ink: #ffffff;
+    --primary: #17191b;
+    --primary-ink: #ffffff;
+    --negative: #b4232a;
+    --warning: #8a4b0c;
+    --positive: #1e7b4f;
+    --pill-negative-bg: #ffedea; --pill-negative-ink: #831c1e;
+    --pill-warning-bg: #fff6e0;  --pill-warning-ink: #7a3e0b;
+    --pill-neutral-bg: #eceff1;  --pill-neutral-ink: #353a3e;
+    --focus: #1b6c80;
+
+    --font: "IBM Plex Sans", Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+    --fs-title: 22px; --fs-section: 16px; --fs-figure: 24px; --fs-body: 14px; --fs-small: 12px;
+    --radius-sheet: 16px; --radius-card: 8px; --radius-control: 6px; --radius-chip: 4px;
+    --gap: 24px; --pad: 24px; --control-height: 32px; --sidebar: 228px;
+    --ease: cubic-bezier(0.23, 1, 0.32, 1);
   }
   @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0f1115;
-      --bg-elevated: #171a21;
-      --border: #262a33;
-      --text: #e7e9ee;
-      --text-muted: #9aa1ad;
-      --text-faint: #6b7280;
-      --accent: #7b93ff;
-      --accent-weak: #1c2340;
-      --success: #4ade80;
-      --success-weak: #10281c;
-      --warning: #f3b95f;
-      --warning-weak: #332405;
-      --danger: #f47171;
-      --row-hover: #1d212b;
-      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 4px 20px rgba(0,0,0,0.25);
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --frame: #0d0f10; --sheet: #15181a; --raised: #1b1f21; --active: #252a2d;
+      --border: #262b2e; --rule: #1f2326; --control: #3d4448;
+      --text: #eef0f1; --muted: #a4abb0;
+      --accent: #5cb8cc; --accent-ink: #0d0f10; --primary: #eef0f1; --primary-ink: #0d0f10;
+      --negative: #f07a82; --warning: #e3a849; --positive: #4cc38a;
+      --pill-negative-bg: #3a1c20; --pill-negative-ink: #f7a6ac;
+      --pill-warning-bg: #36270d;  --pill-warning-ink: #f0c47a;
+      --pill-neutral-bg: #262b2e;  --pill-neutral-ink: #c9cfd3;
+      --focus: #5cb8cc;
     }
   }
-  * { box-sizing: border-box; }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --frame: #0d0f10; --sheet: #15181a; --raised: #1b1f21; --active: #252a2d;
+    --border: #262b2e; --rule: #1f2326; --control: #3d4448;
+    --text: #eef0f1; --muted: #a4abb0;
+    --accent: #5cb8cc; --accent-ink: #0d0f10; --primary: #eef0f1; --primary-ink: #0d0f10;
+    --negative: #f07a82; --warning: #e3a849; --positive: #4cc38a;
+    --pill-negative-bg: #3a1c20; --pill-negative-ink: #f7a6ac;
+    --pill-warning-bg: #36270d;  --pill-warning-ink: #f0c47a;
+    --pill-neutral-bg: #262b2e;  --pill-neutral-ink: #c9cfd3;
+    --focus: #5cb8cc;
+  }
+
+  /* ---- base ---- */
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
   body {
-    font-family: var(--sans);
-    max-width: 1080px; margin: 0 auto; padding: 28px 20px 80px;
-    background: var(--bg); color: var(--text);
-    font-size: 14px; line-height: 1.5;
+    margin: 0; background: var(--frame); color: var(--text);
+    font: 400 var(--fs-body)/20px var(--font); font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent;
   }
-  h1 { font-size: 20px; margin: 0 0 2px; letter-spacing: -0.01em; }
-  .sub { color: var(--text-muted); font-size: 12.5px; margin: 0 0 20px; max-width: 680px; }
-  code, .mono { font-family: var(--mono); }
+  @media (pointer: fine) { html { overscroll-behavior: none; } }
+  h1, h2, h3, h4, p { margin: 0; }
+  h1, h2, h3 { text-wrap: balance; }
+  ::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+  .mono { font-family: var(--mono); font-size: 13px; }
+  .muted { color: var(--muted); }
+  [hidden] { display: none !important; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .skip { position: absolute; left: 8px; top: -48px; z-index: 10; padding: 8px 12px; background: var(--primary); color: var(--primary-ink); border-radius: var(--radius-control); }
+  .skip:focus { top: 8px; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
-  .panel {
-    background: var(--bg-elevated); border: 1px solid var(--border);
-    border-radius: var(--radius); box-shadow: var(--shadow);
-  }
-
-  .toolbar { padding: 14px; margin-bottom: 14px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-  .toolbar input, .toolbar select {
-    font: inherit; font-size: 13px; padding: 8px 10px;
-    border: 1px solid var(--border); border-radius: var(--radius-sm);
-    background: var(--bg); color: var(--text);
-  }
-  .toolbar input::placeholder { color: var(--text-faint); }
-  #backendUrl { flex: 1 1 220px; min-width: 160px; }
-  #apiKey { flex: 1 1 180px; min-width: 140px; }
-  .toolbar .spacer { flex-basis: 100%; height: 0; }
-  .toolbar .filters { display: flex; gap: 8px; flex: 1 1 auto; }
-  #search { flex: 1 1 200px; }
-
+  /* ---- controls: one height, one radius, one vocabulary ---- */
+  button, input, select { font: inherit; color: inherit; }
   button {
-    font: inherit; font-size: 13px; font-weight: 500; padding: 8px 14px;
-    cursor: pointer; border: 1px solid var(--border); border-radius: var(--radius-sm);
-    background: var(--bg-elevated); color: var(--text);
+    height: var(--control-height); padding: 0 12px; border-radius: var(--radius-control);
+    border: 1px solid var(--control); background: var(--sheet); color: var(--text);
+    font-weight: 500; cursor: pointer; touch-action: manipulation; white-space: nowrap;
+    transition: background-color 120ms var(--ease), border-color 120ms var(--ease), transform 120ms var(--ease);
   }
-  button:hover { background: var(--row-hover); }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  button.primary:hover { filter: brightness(1.06); }
-  button.ghost { border-color: transparent; background: transparent; padding: 4px 8px; font-size: 12px; color: var(--text-muted); }
-  button.ghost:hover { background: var(--row-hover); color: var(--text); }
+  button:hover { background: var(--raised); }
+  button:active { transform: scale(0.98); }
+  button.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+  button.primary:hover { background: color-mix(in srgb, var(--primary) 86%, var(--sheet)); }
+  button.quiet { border-color: transparent; background: transparent; color: var(--muted); }
+  button.quiet:hover { background: var(--raised); color: var(--text); }
+  button.link { border: none; background: none; height: auto; padding: 0; color: var(--accent); font-weight: 500; }
+  button.link:hover { background: none; text-decoration: underline; text-underline-offset: 3px; }
+  input, select {
+    height: var(--control-height); padding: 0 10px; border-radius: var(--radius-control);
+    border: 1px solid var(--control); background: var(--sheet); color: var(--text); min-width: 0;
+  }
+  select {
+    padding-right: 30px; appearance: none; cursor: pointer;
+    background: var(--sheet) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%237a8085' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 11px center;
+  }
+  input::placeholder { color: var(--muted); opacity: 1; }
+  input:hover, select:hover { border-color: color-mix(in srgb, var(--control) 70%, var(--text)); }
 
-  #status { color: var(--text-muted); font-size: 12.5px; margin: 2px 2px 14px; min-height: 16px; }
-  #status.err { color: var(--danger); }
+  /* ---- shell: tinted frame + white sheet ---- */
+  .app { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); min-height: 100vh; }
+  .side { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; padding: 16px 12px; gap: 20px; }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px; font-weight: 600; font-size: 15px; }
+  .brand svg { color: var(--accent); flex: none; }
+  .scope { padding: 0 8px; display: grid; gap: 2px; }
+  .scope .host { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .scope .state { display: flex; align-items: center; gap: 6px; font-size: var(--fs-small); color: var(--muted); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot[data-state="ok"] { background: var(--positive); }
+  .dot[data-state="error"] { background: var(--negative); }
+  .nav { display: grid; gap: 2px; }
+  .nav a {
+    display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 8px; border-radius: 8px;
+    color: var(--muted); text-decoration: none; font-weight: 500;
+  }
+  .nav a svg { flex: none; }
+  .nav a:hover { color: var(--text); background: color-mix(in srgb, var(--active) 60%, transparent); }
+  .nav a[aria-current="page"] { color: var(--text); background: var(--active); }
+  .side-foot { margin-top: auto; display: grid; gap: 12px; padding: 0 8px; }
+  .side-foot .label { font-size: var(--fs-small); color: var(--muted); }
 
-  .stats { display: flex; gap: 10px; margin-bottom: 14px; }
-  .stat { flex: 1; padding: 12px 14px; }
-  .stat .n { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
-  .stat .l { font-size: 11.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
-  .stat.warn .n { color: var(--warning); }
+  .seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: 8px; background: var(--active); }
+  .seg button { height: 28px; padding: 0 10px; border: none; background: transparent; color: var(--muted); border-radius: 6px; font-weight: 500; }
+  .seg button:hover { background: transparent; color: var(--text); }
+  .seg button[aria-pressed="true"] { background: var(--sheet); color: var(--text); }
 
-  #empty { color: var(--text-muted); padding: 48px 0; text-align: center; display: none; }
+  .sheet {
+    margin: 8px 8px 8px 0; min-height: calc(100vh - 16px); background: var(--sheet);
+    border: 1px solid var(--border); border-radius: var(--radius-sheet); padding: var(--pad);
+    min-width: 0;
+  }
+  .phonebar { display: none; }
 
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
-  th {
-    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);
-    cursor: pointer; user-select: none; white-space: nowrap; position: sticky; top: 0; background: var(--bg-elevated);
-  }
-  th:hover { color: var(--text); }
-  th .arrow { opacity: 0.4; margin-left: 3px; }
-  th.active .arrow { opacity: 1; color: var(--accent); }
-  tr.issue-row { cursor: pointer; }
-  tr.issue-row:hover { background: var(--row-hover); }
-  tr.issue-row.selected { background: var(--accent-weak); }
-  td.fp { font-family: var(--mono); font-size: 12.5px; }
-  td.num { font-variant-numeric: tabular-nums; }
-  .badge {
-    display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px;
-    border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap;
-  }
-  .badge-exact { background: var(--success-weak); color: var(--success); }
-  .badge-sampled { background: var(--warning-weak); color: var(--warning); }
-  .chip {
-    display: inline-block; padding: 2px 7px; margin: 1px 3px 1px 0; border-radius: 5px;
-    font-size: 11px; background: var(--bg); border: 1px solid var(--border); color: var(--text-muted);
-  }
+  /* ---- title row ---- */
+  .titlerow { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .titlerow h1 { font-size: var(--fs-title); line-height: 28px; font-weight: 600; letter-spacing: -0.01em; }
+  .titlerow .sub { margin-top: 4px; color: var(--muted); max-width: 72ch; }
+  .actions { display: flex; align-items: center; gap: 8px; flex: none; }
+  .fresh { font-size: var(--fs-small); color: var(--muted); }
 
-  #loadMoreBtn { display: none; margin: 14px auto 0; }
-  .center { text-align: center; }
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 20px; }
+  .toolbar .search { flex: 1 1 260px; max-width: 360px; }
+  .toolbar .grow { flex: 1 1 auto; }
 
-  #detail { margin-top: 18px; display: none; }
-  #detail .dhead {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    padding: 14px; border-bottom: 1px solid var(--border);
-  }
-  #detail .dhead .fp { font-size: 14px; font-weight: 600; word-break: break-all; }
-  .section { padding: 14px; border-bottom: 1px solid var(--border); }
-  .section:last-child { border-bottom: none; }
-  .section h3 {
-    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);
-    margin: 0 0 10px;
-  }
-  .kv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
-  .kv-grid .k { font-size: 11px; color: var(--text-muted); margin-bottom: 2px; }
-  .kv-grid .v { font-size: 13.5px; font-weight: 500; }
-  .pct-row { display: flex; gap: 10px; }
-  .pct-box { flex: 1; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); text-align: center; }
-  .pct-box .n { font-size: 16px; font-weight: 600; }
-  .pct-box .l { font-size: 10.5px; color: var(--text-muted); margin-top: 2px; }
-  .ep-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12.5px; }
-  .ep-name { flex: 0 0 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; }
-  .ep-bar-track { flex: 1; height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; }
-  .ep-bar-fill { height: 100%; background: var(--accent); }
-  .ep-count { flex: 0 0 42px; text-align: right; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .status { margin-top: 12px; min-height: 20px; color: var(--muted); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .status.err { color: var(--negative); }
 
-  .exemplar { padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 10px; background: var(--bg); }
-  .exemplar:last-child { margin-bottom: 0; }
-  .exemplar-top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
-  .role-badge {
-    font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
-    padding: 2px 7px; border-radius: 5px; background: var(--accent-weak); color: var(--accent);
-  }
-  .exemplar-meta { color: var(--text-muted); font-size: 11.5px; }
-  .exemplar-source { font-family: var(--mono); font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
-  .exemplar-message { font-size: 13px; margin-bottom: 6px; white-space: pre-wrap; word-break: break-word; }
-  .stack-wrap { position: relative; }
-  .stack-wrap pre {
-    background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-sm);
-    padding: 10px 12px; font-size: 11.5px; overflow-x: auto; margin: 0; white-space: pre;
-    max-height: 260px; overflow-y: auto;
-  }
-  .copy-btn { position: absolute; top: 6px; right: 6px; }
-  details.raw { font-size: 12px; }
-  details.raw summary { cursor: pointer; color: var(--text-muted); padding: 4px 0; }
-  details.raw pre {
-    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
-    padding: 10px 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; font-size: 11.5px;
-  }
-  .empty-note { color: var(--text-faint); font-size: 12.5px; font-style: italic; }
+  /* ---- issues ---- */
+  .split { margin-top: 8px; }
+  .split.has-detail { display: grid; grid-template-columns: minmax(0, 1fr) 460px; gap: var(--gap); align-items: start; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-weight: 400; font-size: var(--fs-small); color: var(--muted); height: 36px; padding: 0 12px; white-space: nowrap; }
+  th.num, td.num { text-align: right; }
+  th button.sort { height: 24px; padding: 0 4px; margin: 0 -4px; border: none; background: none; color: inherit; font-size: inherit; font-weight: inherit; }
+  th button.sort:hover { color: var(--text); background: none; }
+  th[aria-sort] button.sort { color: var(--text); }
+  .sort-glyph { display: inline-block; width: 10px; margin-left: 2px; }
+  td { padding: 12px; border-top: 1px solid var(--rule); vertical-align: top; }
+  tr.issue { cursor: pointer; }
+  tr.issue:hover td { background: color-mix(in srgb, var(--raised) 70%, transparent); }
+  tr.issue.selected td { background: var(--active); }
+  .issue-title { display: block; max-width: 100%; height: auto; padding: 0; border: none; background: none; text-align: left; font-weight: 500; color: var(--text); white-space: normal; }
+  .issue-title:hover { background: none; }
+  .issue-title .msg { font-weight: 400; color: var(--muted); }
+  .clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .issue-meta { margin-top: 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: var(--fs-small); color: var(--muted); }
+  td .fig { font-size: 15px; }
+  td .when { color: var(--muted); white-space: nowrap; }
+  .pill { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: var(--radius-chip); font-size: var(--fs-small); font-weight: 500; white-space: nowrap; flex: none; }
+  .pill.neutral { background: var(--pill-neutral-bg); color: var(--pill-neutral-ink); }
+  .pill.warning { background: var(--pill-warning-bg); color: var(--pill-warning-ink); }
+  .pill.negative { background: var(--pill-negative-bg); color: var(--pill-negative-ink); }
+  .more { display: flex; justify-content: center; margin-top: 16px; }
 
-  /* ---- view tabs ---- */
-  .tabs { display: flex; gap: 4px; margin: 0 0 14px; border-bottom: 1px solid var(--border); }
-  .tabs button {
-    border: none; border-bottom: 2px solid transparent; border-radius: 0; background: transparent;
-    padding: 9px 14px; margin-bottom: -1px; color: var(--text-muted); font-weight: 600;
+  .empty { margin-top: 8px; padding: 32px 0; display: grid; gap: 8px; justify-items: start; max-width: 60ch; }
+  .empty h2 { font-size: var(--fs-section); font-weight: 600; }
+  .empty p { color: var(--muted); }
+  .empty code { font-family: var(--mono); font-size: 13px; padding: 1px 4px; border-radius: 4px; background: var(--raised); }
+
+  /* ---- issue detail ---- */
+  .detail { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--sheet); position: sticky; top: 8px; max-height: calc(100vh - 16px); overflow: auto; overscroll-behavior: contain; }
+  .detail-head { padding: 16px 20px; display: grid; gap: 8px; border-bottom: 1px solid var(--rule); }
+  .detail-head .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .detail-head h2 { font-size: var(--fs-section); font-weight: 600; line-height: 22px; overflow-wrap: anywhere; }
+  .detail-head .msg { color: var(--muted); overflow-wrap: anywhere; }
+  .detail-head .fp { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+  .figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--rule); }
+  .figures > div { padding: 14px 20px; display: grid; gap: 2px; align-content: start; }
+  .figures > div + div { border-left: 1px solid var(--rule); }
+  .figures .k { font-size: var(--fs-small); color: var(--muted); }
+  .figures .v { font-size: 18px; line-height: 24px; }
+  .figures .v small { font-size: var(--fs-small); color: var(--muted); }
+  .block { padding: 16px 20px; border-bottom: 1px solid var(--rule); }
+  .block:last-child { border-bottom: none; }
+  .block > h3 { font-size: var(--fs-body); font-weight: 600; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .block > h3 .muted { font-weight: 400; font-size: var(--fs-small); }
+  .pcts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .pcts .k { font-size: var(--fs-small); color: var(--muted); }
+  .pcts .v { font-size: 16px; }
+  .bars { display: grid; gap: 10px; }
+  .bar-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: baseline; }
+  .bar-row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 13px; }
+  .bar-row .track { grid-column: 1 / -1; height: 2px; }
+  .bar-row .fill { height: 2px; background: var(--muted); }
+  .bar-row:first-child .fill { background: var(--accent); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  .event { padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--rule); display: grid; gap: 8px; }
+  .event:first-child { padding-top: 0; margin-top: 0; border-top: none; }
+  .event-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--fs-small); color: var(--muted); }
+  .event-meta .role { color: var(--text); font-weight: 500; }
+  .event .where { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+  .event .what { overflow-wrap: anywhere; }
+  .event > button.link { justify-self: start; }
+  details.stack summary, details.raw summary { cursor: pointer; color: var(--muted); font-size: var(--fs-small); width: max-content; }
+  details.stack summary:hover, details.raw summary:hover { color: var(--text); }
+  pre.code {
+    margin: 8px 0 0; padding: 12px; background: var(--raised); border-radius: var(--radius-control);
+    font: 12px/18px var(--mono); white-space: pre; overflow: auto; max-height: 280px;
   }
-  .tabs button:hover { background: transparent; color: var(--text); }
-  .tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
-  button:focus-visible, input:focus-visible, select:focus-visible, .log-row:focus-visible {
-    outline: 2px solid var(--accent); outline-offset: 1px;
-  }
+  .code-wrap { position: relative; }
+  .code-wrap .copy { position: absolute; top: 14px; right: 6px; height: 26px; padding: 0 8px; font-size: var(--fs-small); }
+
+  .trail { display: grid; }
+  .trail-row { display: grid; grid-template-columns: 64px 44px minmax(0, 1fr); gap: 8px; padding: 6px 0; border-top: 1px solid var(--rule); align-items: baseline; }
+  .trail-row:first-child { border-top: none; }
+  .trail-row .t { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .trail-row .m { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+  .trail-foot { margin-top: 10px; }
 
   /* ---- logs ---- */
-  :root {
-    --lvl-debug: var(--text-faint); --lvl-info: var(--accent);
-    --lvl-warn: var(--warning);     --lvl-error: var(--danger);
-    --lvl-error-weak: #fdecec;
-  }
-  @media (prefers-color-scheme: dark) { :root { --lvl-error-weak: #3a1717; } }
+  .levels { display: inline-flex; padding: 2px; gap: 2px; border-radius: 8px; background: var(--active); }
+  .levels button { height: 28px; padding: 0 10px; border: none; background: transparent; color: var(--muted); border-radius: 6px; }
+  .levels button:hover { background: transparent; color: var(--text); }
+  .levels button[aria-pressed="true"] { background: var(--sheet); color: var(--text); }
+  .trace-chip { display: inline-flex; align-items: center; gap: 4px; height: var(--control-height); padding: 0 4px 0 10px; border-radius: var(--radius-control); background: var(--pill-neutral-bg); color: var(--pill-neutral-ink); max-width: 320px; }
+  .trace-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; }
+  .trace-chip button { height: 24px; padding: 0 6px; border: none; background: transparent; color: inherit; }
+  #tailBtn[aria-pressed="true"] { border-color: var(--positive); color: var(--positive); }
+  .live-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; margin-right: 8px; vertical-align: 1px; opacity: 0.6; }
+  #tailBtn[aria-pressed="true"] .live-dot { opacity: 1; animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.3; } }
 
-  .logs-toolbar { gap: 8px; }
-  #logQ { flex: 1 1 220px; min-width: 160px; }
-  .level-chips { display: flex; gap: 4px; }
-  .level-chips button {
-    padding: 6px 10px; font-size: 12px; font-weight: 600; border-radius: 999px;
-    color: var(--text-faint); background: transparent;
-  }
-  .level-chips button[aria-pressed="true"] { color: var(--text); background: var(--bg); }
-  .level-chips button[aria-pressed="true"][data-level="debug"] { border-color: var(--lvl-debug); }
-  .level-chips button[aria-pressed="true"][data-level="info"]  { border-color: var(--lvl-info);  color: var(--lvl-info); }
-  .level-chips button[aria-pressed="true"][data-level="warn"]  { border-color: var(--lvl-warn);  color: var(--lvl-warn); }
-  .level-chips button[aria-pressed="true"][data-level="error"] { border-color: var(--lvl-error); color: var(--lvl-error); }
-  .trace-chip {
-    display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; border-radius: 999px;
-    background: var(--accent-weak); color: var(--accent); font-size: 12px; max-width: 320px;
-  }
-  .trace-chip[hidden] { display: none; } /* an author `display` rule would otherwise beat the hidden attribute */
-  .trace-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
-  .trace-chip button { padding: 0 6px; border: none; background: transparent; color: inherit; font-size: 13px; line-height: 1.4; }
-  .grow { flex: 1 1 auto; }
-  #tailBtn[aria-pressed="true"] { border-color: var(--success); color: var(--success); background: var(--success-weak); }
-  .live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); margin-right: 7px; }
-  #tailBtn[aria-pressed="true"] .live-dot { background: var(--success); animation: pulse 1.6s ease-in-out infinite; }
-  @keyframes pulse { 50% { opacity: 0.25; } }
-  @media (prefers-reduced-motion: reduce) { #tailBtn[aria-pressed="true"] .live-dot { animation: none; } }
-
-  #logsStatus { color: var(--text-muted); font-size: 12.5px; margin: 2px 2px 14px; min-height: 16px; }
-  #logsStatus.err { color: var(--danger); }
-
-  #logsList { font-size: 12.5px; }
-  .log-row {
-    display: grid; grid-template-columns: 118px 52px 120px 1fr; gap: 10px; align-items: baseline;
-    padding: 7px 12px; border-bottom: 1px solid var(--border); border-left: 3px solid transparent;
-    cursor: pointer;
-  }
-  .log-row:hover { background: var(--row-hover); }
-  .log-row.open { background: var(--accent-weak); }
-  .log-row.lvl-debug { border-left-color: var(--lvl-debug); }
-  .log-row.lvl-info  { border-left-color: transparent; }
-  .log-row.lvl-warn  { border-left-color: var(--lvl-warn); }
-  .log-row.lvl-error { border-left-color: var(--lvl-error); background: var(--lvl-error-weak); }
-  .log-row.lvl-error:hover { filter: brightness(0.98); }
-  .log-time { font-family: var(--mono); font-size: 12px; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .log-level { font-family: var(--mono); font-size: 11.5px; font-weight: 700; }
-  .lvl-debug .log-level { color: var(--lvl-debug); }
-  .lvl-info  .log-level { color: var(--lvl-info); }
-  .lvl-warn  .log-level { color: var(--lvl-warn); }
-  .lvl-error .log-level { color: var(--lvl-error); }
-  .log-svc { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .log-msg {
-    font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; white-space: pre-wrap;
-    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
-  }
+  .loglist { margin-top: 8px; }
+  .log-head, .log-row { display: grid; grid-template-columns: 104px 52px 140px minmax(0, 1fr); gap: 12px; padding: 0 12px; }
+  .log-head { height: 36px; align-items: center; font-size: var(--fs-small); color: var(--muted); }
+  .log-row { padding-top: 8px; padding-bottom: 8px; border-top: 1px solid var(--rule); cursor: pointer; align-items: baseline; }
+  .log-row:hover { background: color-mix(in srgb, var(--raised) 70%, transparent); }
+  .log-row.open { background: var(--active); }
+  .log-time { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .log-level { font-size: var(--fs-small); font-weight: 500; color: var(--muted); }
+  .lvl-warn .log-level { color: var(--warning); }
+  .lvl-error .log-level { color: var(--negative); }
+  .log-svc { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .log-msg { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .log-row.open .log-msg { display: block; }
-  .log-detail { padding: 12px 14px 14px 15px; border-bottom: 1px solid var(--border); background: var(--bg); }
-  .log-detail pre.full {
-    margin: 0 0 12px; padding: 10px 12px; background: var(--bg-elevated); border: 1px solid var(--border);
-    border-radius: var(--radius-sm); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto;
-  }
-  .log-detail h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin: 14px 0 8px; }
-  .field-table { width: 100%; font-size: 12px; }
-  .field-table td { padding: 4px 10px 4px 0; border: none; vertical-align: top; }
-  .field-table td:first-child { color: var(--text-muted); font-family: var(--mono); white-space: nowrap; width: 1%; }
-  .field-table td:last-child { font-family: var(--mono); overflow-wrap: anywhere; white-space: pre-wrap; }
-  .detail-actions { display: flex; gap: 6px; margin-top: 14px; }
-  #logsEmpty { color: var(--text-muted); padding: 44px 16px; text-align: center; display: none; }
-  #logsMoreBtn { display: none; margin: 14px auto 0; }
-  button.link-btn { font-size: 12px; padding: 3px 8px; }
+  .log-detail { padding: 16px 12px 20px 128px; background: var(--active); border-top: 1px solid var(--rule); display: grid; gap: 16px; }
+  .log-detail pre.code { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--sheet); }
+  .kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px 24px; }
+  .kv .k { font-size: var(--fs-small); color: var(--muted); }
+  .kv .v { overflow-wrap: anywhere; }
+  .fields { width: 100%; border-collapse: collapse; }
+  .fields td { padding: 4px 16px 4px 0; border: none; font-family: var(--mono); font-size: 12px; vertical-align: top; }
+  .fields td:first-child { color: var(--muted); white-space: nowrap; width: 1%; }
+  .fields td:last-child { overflow-wrap: anywhere; white-space: pre-wrap; }
+  .row-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
-  @media (max-width: 640px) {
-    .log-row { grid-template-columns: auto auto 1fr; row-gap: 3px; }
+  /* ---- connection (first run in the sheet; afterwards in a dialog) ---- */
+  .connect { display: grid; gap: 16px; max-width: 440px; }
+  .field { display: grid; gap: 6px; }
+  .field label { font-weight: 500; }
+  .field .hint { font-size: var(--fs-small); color: var(--muted); }
+  .field input { height: 36px; }
+  .connect .row { display: flex; gap: 8px; align-items: center; }
+  .connect .row button { height: 36px; }
+  .first-run { padding-top: 8px; display: grid; gap: 24px; max-width: 520px; }
+  .first-run p { color: var(--muted); }
+  dialog { padding: 0; border: 1px solid var(--border); border-radius: 12px; background: var(--sheet); color: var(--text); width: min(480px, calc(100vw - 32px)); box-shadow: 0 16px 48px rgb(0 0 0 / 0.18); overscroll-behavior: contain; }
+  dialog::backdrop { background: rgb(0 0 0 / 0.32); }
+  dialog .d-head { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px 0; }
+  dialog .d-head h2 { font-size: var(--fs-section); font-weight: 600; }
+  dialog .d-body { padding: 16px 20px 20px; display: grid; gap: 24px; }
+  dialog .appearance { display: grid; gap: 8px; justify-items: start; }
+  dialog .appearance .label { font-weight: 500; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition-duration: 0ms !important; animation: none !important; }
+  }
+
+  /* ---- tablet: the detail replaces the list instead of sitting beside it ---- */
+  @media (max-width: 1199px) {
+    .split.has-detail { display: block; }
+    .split.has-detail .list-pane { display: none; }
+    .detail { position: static; max-height: none; }
+  }
+
+  /* ---- tablet and phone: the sidebar folds into a top bar; the sheet keeps the width ---- */
+  @media (max-width: 1100px) {
+    .app { display: block; }
+    .side { display: none; }
+    .phonebar {
+      display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 12px 0 16px;
+      position: sticky; top: 0; z-index: 2; background: var(--frame);
+    }
+    .phonebar .brand { padding: 0; margin-right: auto; }
+    .phonebar .seg a { display: inline-flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 6px; color: var(--muted); text-decoration: none; font-weight: 500; }
+    .phonebar .seg a[aria-current="page"] { background: var(--sheet); color: var(--text); }
+    .phonebar .icon-btn { width: 44px; height: 44px; padding: 0; display: inline-grid; place-items: center; border: none; background: transparent; color: var(--muted); }
+    .sheet { margin: 0 8px 8px; min-height: calc(100vh - 60px); }
+  }
+
+  /* ---- phone: the sheet is the screen ---- */
+  @media (max-width: 760px) {
+    .sheet { margin: 0; border: none; border-radius: 0; min-height: calc(100vh - 52px); padding: 20px 16px; }
+    .titlerow { flex-wrap: wrap; }
+    .toolbar .search { max-width: none; flex-basis: 100%; }
+    .toolbar select { flex: 1 1 140px; }
+    .col-users, .col-release { display: none; }
+    th, td { padding-left: 8px; padding-right: 8px; }
+    .figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .figures > div:nth-child(3) { border-left: none; }
+    .figures > div:nth-child(n+3) { border-top: 1px solid var(--rule); }
+    .log-head { display: none; }
+    .log-row { grid-template-columns: auto auto minmax(0, 1fr); row-gap: 4px; padding: 10px 4px; }
     .log-msg { grid-column: 1 / -1; }
+    .log-detail { padding: 16px 4px 20px; }
   }
 </style>
 </head>
 <body>
-  <h1>BugBuster</h1>
-  <p class="sub">Read-only viewer against the Query API — your org's grouped errors, and the application logs around them. See docs/api.md for what this calls.</p>
+<a class="skip" href="#main">Skip to content</a>
 
-  <div class="panel toolbar">
-    <input id="backendUrl" placeholder="Backend URL (e.g. http://localhost:8080)" />
-    <input id="apiKey" placeholder="API key" type="password" />
-    <button id="loadBtn" class="primary">Load</button>
-  </div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <!-- The mark: many lines folding into one, which is what BugBuster does to a storm of errors. -->
+  <symbol id="mark" viewBox="0 0 20 20"><path d="M3 4.5h14M5.5 8.5h9M8 12.5h4M9.5 16.5h1" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-issues" viewBox="0 0 16 16"><path d="M8 1.75 14.5 13.5h-13L8 1.75Z M8 6v3.5 M8 11.4v.1" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-logs" viewBox="0 0 16 16"><path d="M2.5 3.5h11M2.5 6.5h11M2.5 9.5h7M2.5 12.5h9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 16 16"><path d="M2.5 4.5h6M11.5 4.5h2M2.5 11.5h2M7.5 11.5h6M10 3v3M6 10v3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+</svg>
 
-  <div class="tabs" role="tablist" aria-label="View">
-    <button role="tab" id="tab-issues" data-view="issues" aria-selected="true">Issues</button>
-    <button role="tab" id="tab-logs" data-view="logs" aria-selected="false">Logs</button>
-  </div>
+<div class="app">
+  <aside class="side" aria-label="BugBuster">
+    <div class="brand"><svg width="20" height="20" aria-hidden="true"><use href="#mark"/></svg><span translate="no">BugBuster</span></div>
+    <div class="scope">
+      <span class="host" id="scopeHost" translate="no">Not connected</span>
+      <span class="state"><span class="dot" id="scopeDot"></span><span id="scopeState">No backend yet</span></span>
+    </div>
+    <nav class="nav" aria-label="Views">
+      <a href="#issues" id="tab-issues" data-view="issues" aria-current="page"><svg width="16" height="16" aria-hidden="true"><use href="#i-issues"/></svg>Issues</a>
+      <a href="#logs" id="tab-logs" data-view="logs"><svg width="16" height="16" aria-hidden="true"><use href="#i-logs"/></svg>Logs</a>
+    </nav>
+    <div class="side-foot">
+      <div class="label" id="themeLabel">Theme</div>
+      <div class="seg" role="group" aria-labelledby="themeLabel" data-theme-control></div>
+      <button class="quiet" id="connectionBtn" style="justify-self:start; margin-left:-8px"><svg width="16" height="16" aria-hidden="true" style="margin-right:8px; vertical-align:-3px"><use href="#i-settings"/></svg>Settings</button>
+    </div>
+  </aside>
 
-  <section id="view-issues" role="tabpanel" aria-labelledby="tab-issues">
-    <div class="panel toolbar">
-      <div class="filters">
-        <input id="search" placeholder="Filter by fingerprint or release…" />
-        <select id="fidelityFilter">
-          <option value="all">All fidelity</option>
-          <option value="exact">Exact only</option>
-          <option value="sampled">Sampled only</option>
+  <header class="phonebar">
+    <div class="brand"><svg width="20" height="20" aria-hidden="true"><use href="#mark"/></svg><span translate="no">BugBuster</span></div>
+    <nav class="seg" aria-label="Views">
+      <a href="#issues" data-view="issues" aria-current="page">Issues</a>
+      <a href="#logs" data-view="logs">Logs</a>
+    </nav>
+    <button class="icon-btn" id="phoneSettingsBtn" aria-label="Settings"><svg width="18" height="18" aria-hidden="true"><use href="#i-settings"/></svg></button>
+  </header>
+
+  <!-- First run: no key saved yet. Added to the sheet only then, with the connection form moved in. -->
+  <template id="firstRunTpl">
+    <section id="firstRun" class="first-run" aria-labelledby="firstRunTitle">
+      <div class="titlerow"><div>
+        <h1 id="firstRunTitle">Connect to your backend</h1>
+        <p class="sub">Enter the address of your BugBuster backend and your organization’s API key to see its issues and logs.</p>
+      </div></div>
+      <div id="firstRunSlot"></div>
+    </section>
+  </template>
+
+  <main class="sheet" id="main" tabindex="-1">
+    <section id="view-issues" aria-labelledby="issuesTitle">
+      <div class="titlerow">
+        <div>
+          <h1 id="issuesTitle">Issues</h1>
+          <p class="sub" id="issuesSummary">Errors grouped by cause, most recently seen first.</p>
+        </div>
+        <div class="actions">
+          <span class="fresh" id="issuesFresh"></span>
+          <button id="issuesRefreshBtn">Refresh</button>
+        </div>
+      </div>
+      <div class="toolbar">
+        <input id="search" class="search" type="search" placeholder="Filter by message, fingerprint or release…" aria-label="Filter issues" autocomplete="off" spellcheck="false">
+        <select id="fidelityFilter" aria-label="Count accuracy">
+          <option value="all">All counts</option>
+          <option value="exact">Exact counts</option>
+          <option value="sampled">Estimated counts</option>
         </select>
       </div>
-    </div>
-    <div id="status"></div>
+      <div class="status" id="status" role="status" aria-live="polite"></div>
 
-    <div class="stats" id="stats" style="display:none">
-      <div class="panel stat"><div class="n" id="statTotal">0</div><div class="l">Issues loaded</div></div>
-      <div class="panel stat"><div class="n" id="statOccurrences">0</div><div class="l">Total occurrences</div></div>
-      <div class="panel stat warn"><div class="n" id="statSampled">0</div><div class="l">Sampled / degraded</div></div>
-    </div>
-
-    <div id="empty" class="panel">No issues yet.</div>
-
-    <div class="panel" style="overflow:auto">
-      <table id="issuesTable" style="display:none">
-        <thead>
-          <tr>
-            <th data-key="fingerprint">Fingerprint <span class="arrow">▾</span></th>
-            <th data-key="count">Count <span class="arrow">▾</span></th>
-            <th data-key="usersAffected">Users <span class="arrow">▾</span></th>
-            <th data-key="releases">Releases <span class="arrow">▾</span></th>
-            <th data-key="lastSeen" class="active">Last seen (IST) <span class="arrow">▾</span></th>
-            <th data-key="fidelity">Fidelity <span class="arrow">▾</span></th>
-          </tr>
-        </thead>
-        <tbody id="issuesBody"></tbody>
-      </table>
-    </div>
-    <div class="center"><button id="loadMoreBtn">Load more</button></div>
-
-    <div id="detail" class="panel"></div>
-  </section>
-
-  <section id="view-logs" role="tabpanel" aria-labelledby="tab-logs" style="display:none">
-    <div class="panel toolbar logs-toolbar">
-      <input id="logQ" placeholder="Search log messages…" aria-label="Search log messages" />
-      <select id="logRange" aria-label="Time range">
-        <option value="15">Last 15 minutes</option>
-        <option value="60" selected>Last hour</option>
-        <option value="360">Last 6 hours</option>
-        <option value="1440">Last 24 hours</option>
-        <option value="10080">Last 7 days</option>
-        <option value="0">All retained</option>
-      </select>
-      <select id="logService" aria-label="Service"><option value="">All services</option></select>
-      <select id="logEnv" aria-label="Environment"><option value="">All environments</option></select>
-      <div class="spacer"></div>
-      <div class="level-chips" id="levelChips" role="group" aria-label="Levels">
-        <button data-level="debug" aria-pressed="true">debug</button>
-        <button data-level="info" aria-pressed="true">info</button>
-        <button data-level="warn" aria-pressed="true">warn</button>
-        <button data-level="error" aria-pressed="true">error</button>
+      <div class="split" id="issuesSplit">
+        <div class="list-pane">
+          <table id="issuesTable" hidden>
+            <thead>
+              <tr>
+                <th data-key="message" style="width:55%"><button class="sort">Issue<span class="sort-glyph"></span></button></th>
+                <th data-key="count" class="num"><button class="sort">Events<span class="sort-glyph"></span></button></th>
+                <th data-key="usersAffected" class="num col-users"><button class="sort">Users<span class="sort-glyph"></span></button></th>
+                <th data-key="releases" class="col-release"><button class="sort">Release<span class="sort-glyph"></span></button></th>
+                <th data-key="lastSeen" class="num"><button class="sort">Last seen<span class="sort-glyph"></span></button></th>
+              </tr>
+            </thead>
+            <tbody id="issuesBody"></tbody>
+          </table>
+          <div class="empty" id="empty" hidden></div>
+          <div class="more"><button id="loadMoreBtn" hidden>Load more issues</button></div>
+        </div>
+        <aside class="detail" id="detail" hidden aria-label="Issue details"></aside>
       </div>
-      <span id="traceChip" class="trace-chip" hidden><span id="traceChipText"></span><button id="traceChipClear" aria-label="Clear trace filter">✕</button></span>
-      <div class="grow"></div>
-      <button id="tailBtn" aria-pressed="false" title="Poll for new lines every few seconds"><span class="live-dot"></span>Live</button>
-      <button id="logsRefreshBtn">Refresh</button>
+    </section>
+
+    <section id="view-logs" aria-labelledby="logsTitle" hidden>
+      <div class="titlerow">
+        <div>
+          <h1 id="logsTitle">Logs</h1>
+          <p class="sub" id="logsStatus" role="status" aria-live="polite">Every line your services wrote, newest first.</p>
+        </div>
+        <div class="actions">
+          <button id="tailBtn" aria-pressed="false" title="Check for new lines every 3 seconds"><span class="live-dot" aria-hidden="true"></span>Live</button>
+          <button id="logsRefreshBtn">Refresh</button>
+        </div>
+      </div>
+      <div class="toolbar">
+        <input id="logQ" class="search" type="search" placeholder="Search messages…" aria-label="Search log messages" autocomplete="off" spellcheck="false">
+        <select id="logRange" aria-label="Time range">
+          <option value="15">Last 15 minutes</option>
+          <option value="60" selected>Last hour</option>
+          <option value="360">Last 6 hours</option>
+          <option value="1440">Last 24 hours</option>
+          <option value="10080">Last 7 days</option>
+          <option value="0">All retained</option>
+        </select>
+        <select id="logService" aria-label="Service"><option value="">All services</option></select>
+        <select id="logEnv" aria-label="Environment"><option value="">All environments</option></select>
+        <div class="levels" id="levelChips" role="group" aria-label="Levels">
+          <button data-level="debug" aria-pressed="true">Debug</button>
+          <button data-level="info" aria-pressed="true">Info</button>
+          <button data-level="warn" aria-pressed="true">Warn</button>
+          <button data-level="error" aria-pressed="true">Error</button>
+        </div>
+        <span id="traceChip" class="trace-chip" hidden><span id="traceChipText"></span><button id="traceChipClear" aria-label="Clear the request filter">Clear</button></span>
+      </div>
+      <div class="status" id="logsError" role="alert"></div>
+      <div class="loglist">
+        <div class="log-head" aria-hidden="true"><span>Time (IST)</span><span>Level</span><span>Service</span><span>Message</span></div>
+        <div id="logsList" aria-label="Log lines"></div>
+        <div class="empty" id="logsEmpty" hidden></div>
+      </div>
+      <div class="more"><button id="logsMoreBtn" hidden>Load older lines</button></div>
+    </section>
+  </main>
+</div>
+
+<dialog id="connDialog" aria-labelledby="connDialogTitle">
+  <div class="d-head">
+    <h2 id="connDialogTitle">Settings</h2>
+    <button class="quiet" id="connDialogClose" aria-label="Close">Close</button>
+  </div>
+  <div class="d-body">
+    <div id="dialogSlot">
+      <form id="connForm" class="connect" novalidate>
+        <div class="field">
+          <label for="backendUrl">Backend URL</label>
+          <input id="backendUrl" name="backendUrl" type="url" inputmode="url" autocomplete="url" spellcheck="false" placeholder="https://bugbuster.yourcompany.in…" aria-describedby="backendUrlHint">
+          <span class="hint" id="backendUrlHint">The address of your backend, without /ingest on the end.</span>
+        </div>
+        <div class="field">
+          <label for="apiKey">API key</label>
+          <input id="apiKey" name="apiKey" type="password" autocomplete="off" spellcheck="false" aria-describedby="apiKeyHint">
+          <span class="hint" id="apiKeyHint">Your organization’s key. It is kept only in this browser.</span>
+        </div>
+        <div class="row">
+          <button class="primary" id="loadBtn" type="submit">Connect</button>
+          <span class="muted" id="connError" role="alert"></span>
+        </div>
+      </form>
     </div>
-    <div id="logsStatus"></div>
-    <div class="panel" style="overflow:hidden">
-      <div id="logsList" role="log" aria-live="off"></div>
-      <div id="logsEmpty"></div>
+    <div class="appearance">
+      <span class="label" id="themeLabel2">Theme</span>
+      <div class="seg" role="group" aria-labelledby="themeLabel2" data-theme-control></div>
     </div>
-    <div class="center"><button id="logsMoreBtn">Load older</button></div>
-  </section>
+  </div>
+</dialog>
 
 <script>
+  /* =============================================================================================
+     Shared: connection, formatting, theme. Everything that comes off the wire is untrusted text
+     (an error message or a log line can contain anything), so it is only ever inserted with
+     textContent, never as HTML.
+     ============================================================================================= */
   const $ = (id) => document.getElementById(id);
+  const TZ = "Asia/Kolkata"; // the org's own timezone; the wire format itself stays UTC
 
-  // Per-viewer convenience only — never shared, never read by anything but this browser.
+  // Per-viewer convenience only: never shared, never read by anything but this browser.
   $("backendUrl").value = localStorage.getItem("bb_backend_url") || "http://localhost:8080";
   $("apiKey").value = localStorage.getItem("bb_api_key") || "";
 
+  /** The backend URL as typed, minus a trailing slash and the /ingest a pasted SDK URL carries. */
+  function normalizeUrl(raw) { return raw.trim().replace(/\/+$/, "").replace(/\/ingest$/, ""); }
+  const conn = () => ({ url: normalizeUrl($("backendUrl").value), key: $("apiKey").value.trim() });
+
+  function saveConnection() {
+    const { url, key } = conn();
+    localStorage.setItem("bb_backend_url", url);
+    localStorage.setItem("bb_api_key", key);
+    $("backendUrl").value = url;
+    updateScope();
+  }
+
+  function updateScope(state, message) {
+    const { url, key } = conn();
+    let host = url;
+    try { host = new URL(url).host; } catch (_) {}
+    $("scopeHost").textContent = key ? host : "Not connected";
+    $("scopeHost").title = url;
+    if (state) {
+      $("scopeDot").dataset.state = state;
+      $("scopeState").textContent = message;
+    } else if (!key) {
+      $("scopeDot").dataset.state = "";
+      $("scopeState").textContent = "No backend yet";
+    }
+  }
+
+  /** One fetch for every call: auth header, and the connection state in the sidebar kept honest. */
+  async function api(path) {
+    const { url, key } = conn();
+    let res;
+    try {
+      res = await fetch(url + path, { headers: { Authorization: "Bearer " + key } });
+    } catch (_) {
+      updateScope("error", "Can’t reach the backend");
+      throw new Error("Can’t reach " + url + ". Check the backend URL and that the server is running.");
+    }
+    if (!res.ok) {
+      let detail = "";
+      try { detail = (await res.json()).error || ""; } catch (_) {}
+      if (res.status === 401) {
+        updateScope("error", "API key not accepted");
+        throw new Error("The backend didn’t accept this API key" + (detail ? " (" + detail + ")" : "") + ". Check it in Settings.");
+      }
+      throw new Error("The backend answered HTTP " + res.status + (detail ? ": " + detail : "") + ".");
+    }
+    updateScope("ok", "Connected");
+    return res.json();
+  }
+
+  const nf = new Intl.NumberFormat("en-IN");
+  const fmtNum = (n) => (typeof n === "number" ? nf.format(n) : "—");
+  const dtf = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  const tf = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  const dayKey = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
+  const shortDay = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, month: "short", day: "numeric" });
+  const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+
+  function formatIST(iso) {
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? String(iso) : dtf.format(d) + " IST";
+  }
+  /** "3 minutes ago", "yesterday", or a date once it is older than a week. */
+  function ago(iso) {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "—";
+    const s = Math.round((d.getTime() - Date.now()) / 1000);
+    const abs = Math.abs(s);
+    if (abs < 45) return "just now";
+    if (abs < 3600) return rtf.format(Math.round(s / 60), "minute");
+    if (abs < 86400) return rtf.format(Math.round(s / 3600), "hour");
+    if (abs < 7 * 86400) return rtf.format(Math.round(s / 86400), "day");
+    return shortDay.format(d);
+  }
+  /** Log time: hh:mm:ss.mmm today, with the date in front on any other day. */
+  function logTime(iso) {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso);
+    const ms = "." + String(d.getUTCMilliseconds()).padStart(3, "0");
+    const t = tf.format(d) + ms;
+    return dayKey.format(d) === dayKey.format(new Date()) ? t : shortDay.format(d) + " " + t;
+  }
+  function plural(n, one, many) { return fmtNum(n) + " " + (n === 1 ? one : (many || one + "s")); }
+
+  function el(tag, className, text) {
+    const e = document.createElement(tag);
+    if (className) e.className = className;
+    if (text !== undefined && text !== null) e.textContent = text;
+    return e;
+  }
+
+  function copyToClipboard(text, btn) {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) return;
+    navigator.clipboard.writeText(text).then(() => {
+      const old = btn.textContent;
+      btn.textContent = "Copied";
+      setTimeout(() => (btn.textContent = old), 1200);
+    }).catch(() => {});
+  }
+
+  /* ---- theme: System follows the OS; Light and Dark are remembered in this browser ---- */
+  const THEMES = [["system", "System"], ["light", "Light"], ["dark", "Dark"]];
+  function currentTheme() { return document.documentElement.dataset.theme || "system"; }
+  function applyTheme(choice) {
+    if (choice === "system") { delete document.documentElement.dataset.theme; localStorage.removeItem("bb_theme"); }
+    else { document.documentElement.dataset.theme = choice; localStorage.setItem("bb_theme", choice); }
+    // The browser's own toolbar follows the frame colour of the theme actually showing.
+    const metas = document.querySelectorAll('meta[name="theme-color"]');
+    metas[0].content = choice === "dark" ? "#0d0f10" : "#f2f5f7";
+    metas[1].content = choice === "light" ? "#f2f5f7" : "#0d0f10";
+    document.querySelectorAll("[data-theme-control] button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.choice === choice)));
+  }
+  document.querySelectorAll("[data-theme-control]").forEach((group) => {
+    for (const [choice, label] of THEMES) {
+      const b = el("button", null, label);
+      b.type = "button";
+      b.dataset.choice = choice;
+      b.addEventListener("click", () => applyTheme(choice));
+      group.appendChild(b);
+    }
+  });
+  applyTheme(currentTheme());
+
+  /* =============================================================================================
+     Issues
+     ============================================================================================= */
   let nextCursor = undefined;
   let allIssues = [];          // every issue loaded so far, across pages
   let sortKey = "lastSeen";
   let sortDir = "desc";
   let selectedFingerprint = null;
+  const titles = new Map();    // fingerprint -> { type, message } from its first example event
+  let titleQueue = [];
+  let titlesInFlight = 0;
+
+  const isExactOf = (i) => (i.fidelity ? i.fidelity.isExact : i.adjustedCount === 1);
+  const weightOf = (i) => (i.fidelity ? i.fidelity.adjustedCount : i.adjustedCount);
 
   async function loadIssues(append) {
-    const backendUrl = $("backendUrl").value.replace(/\/$/, "");
-    const apiKey = $("apiKey").value;
-    localStorage.setItem("bb_backend_url", backendUrl);
-    localStorage.setItem("bb_api_key", apiKey);
-
-    setStatus("Loading…");
+    saveConnection();
+    setStatus(append ? "Loading more issues…" : "Loading issues…");
     try {
-      const url = backendUrl + "/issues" + (append && nextCursor ? "?cursor=" + encodeURIComponent(nextCursor) : "");
-      const res = await fetch(url, { headers: { Authorization: "Bearer " + apiKey } });
-      if (!res.ok) {
-        setStatus("Error: HTTP " + res.status + " (check backend URL and API key)", true);
-        $("issuesTable").style.display = "none";
-        $("stats").style.display = "none";
-        $("empty").style.display = "none";
-        $("loadMoreBtn").style.display = "none";
-        return;
-      }
-      const data = await res.json();
+      const data = await api("/issues" + (append && nextCursor ? "?cursor=" + encodeURIComponent(nextCursor) : ""));
       nextCursor = data.nextCursor;
       const issues = data.issues || [];
       allIssues = append ? allIssues.concat(issues) : issues;
-      if (!append) { $("detail").style.display = "none"; selectedFingerprint = null; }
+      if (!append) closeDetail(false);
+      $("issuesFresh").textContent = "Updated " + tf.format(new Date());
+      setStatus("");
       renderAll();
-      $("loadMoreBtn").style.display = nextCursor ? "inline-block" : "none";
-      setStatus("Loaded " + allIssues.length + " issue(s)" + (nextCursor ? " (more available)." : "."));
+      queueTitles(issues);
     } catch (err) {
-      setStatus("Request failed: " + err.message, true);
+      setStatus(err.message, true, () => loadIssues(append));
+      $("issuesTable").hidden = true;
+      $("loadMoreBtn").hidden = true;
     }
   }
 
-  function setStatus(text, isError) {
-    $("status").textContent = text;
-    $("status").className = isError ? "err" : "";
+  function setStatus(text, isError, retry) {
+    const s = $("status");
+    s.textContent = text;
+    s.className = "status" + (isError ? " err" : "");
+    if (retry) {
+      const b = el("button", null, "Try again");
+      b.addEventListener("click", retry);
+      s.appendChild(b);
+    }
+  }
+
+  // The issue list from the API carries no message, so each row's title is read from the issue's
+  // first example event, a few requests at a time. Until it arrives the row shows its fingerprint.
+  function queueTitles(issues) {
+    for (const i of issues) if (!titles.has(i.fingerprint)) titleQueue.push(i.fingerprint);
+    pumpTitles();
+  }
+  function pumpTitles() {
+    while (titlesInFlight < 4 && titleQueue.length) {
+      const fp = titleQueue.shift();
+      if (titles.has(fp)) continue;
+      titlesInFlight++;
+      api("/issues/" + encodeURIComponent(fp) + "/exemplars")
+        .then((d) => {
+          const ev = (d.exemplars || [])[0];
+          titles.set(fp, ev ? { type: ev.error ? ev.error.type : ev.type, message: ev.error ? ev.error.message : "" } : null);
+          updateRowTitle(fp);
+        })
+        .catch(() => titles.set(fp, null))
+        .finally(() => { titlesInFlight--; pumpTitles(); });
+    }
+  }
+  function updateRowTitle(fp) {
+    const row = document.querySelector(`tr.issue[data-fp="${CSS.escape(fp)}"]`);
+    if (row) fillTitle(row.querySelector(".issue-title"), fp);
+  }
+  function fillTitle(btn, fp) {
+    btn.textContent = "";
+    const t = titles.get(fp);
+    const inner = el("span", "clamp");
+    if (t && (t.type || t.message)) {
+      inner.appendChild(el("span", null, t.type || "Error"));
+      if (t.message) inner.appendChild(el("span", "msg", ": " + t.message));
+    } else {
+      inner.appendChild(el("span", "mono", fp));
+    }
+    btn.appendChild(inner);
   }
 
   function matchesFilter(issue) {
     const q = $("search").value.trim().toLowerCase();
     if (q) {
-      const inFingerprint = issue.fingerprint.toLowerCase().includes(q);
-      const inReleases = (issue.releases || []).some(r => r.toLowerCase().includes(q));
-      if (!inFingerprint && !inReleases) return false;
+      const t = titles.get(issue.fingerprint);
+      const hay = [issue.fingerprint, ...(issue.releases || []), t ? t.type + " " + t.message : ""].join(" ").toLowerCase();
+      if (!hay.includes(q)) return false;
     }
-    const fFilter = $("fidelityFilter").value;
-    const isExact = issue.fidelity ? issue.fidelity.isExact : issue.adjustedCount === 1;
-    if (fFilter === "exact" && !isExact) return false;
-    if (fFilter === "sampled" && isExact) return false;
+    const f = $("fidelityFilter").value;
+    if (f === "exact" && !isExactOf(issue)) return false;
+    if (f === "sampled" && isExactOf(issue)) return false;
     return true;
   }
 
   function sortValue(issue, key) {
-    if (key === "fidelity") return issue.fidelity && issue.fidelity.isExact ? 1 : 0;
+    if (key === "message") { const t = titles.get(issue.fingerprint); return (t ? t.type + " " + t.message : issue.fingerprint).toLowerCase(); }
     if (key === "releases") return (issue.releases || []).join(",");
     return issue[key];
   }
@@ -432,251 +761,313 @@
     const filtered = allIssues.filter(matchesFilter);
     const sorted = filtered.slice().sort((a, b) => {
       const av = sortValue(a, sortKey), bv = sortValue(b, sortKey);
-      let cmp;
-      if (typeof av === "string" && typeof bv === "string") cmp = av.localeCompare(bv);
-      else cmp = (av > bv) - (av < bv);
+      const cmp = typeof av === "string" && typeof bv === "string" ? av.localeCompare(bv) : (av > bv) - (av < bv);
       return sortDir === "asc" ? cmp : -cmp;
     });
-    renderStats(filtered);
+    renderSummary(filtered);
     renderTable(sorted);
-    document.querySelectorAll("#issuesTable th").forEach(th => {
-      th.classList.toggle("active", th.dataset.key === sortKey);
-      th.querySelector(".arrow").textContent = th.dataset.key === sortKey ? (sortDir === "asc" ? "▴" : "▾") : "▾";
+    document.querySelectorAll("#issuesTable th").forEach((th) => {
+      const on = th.dataset.key === sortKey;
+      if (on) th.setAttribute("aria-sort", sortDir === "asc" ? "ascending" : "descending");
+      else th.removeAttribute("aria-sort");
+      th.querySelector(".sort-glyph").textContent = on ? (sortDir === "asc" ? "↑" : "↓") : "";
     });
+    $("loadMoreBtn").hidden = !nextCursor;
   }
 
-  function renderStats(list) {
-    if (allIssues.length === 0) { $("stats").style.display = "none"; return; }
-    $("stats").style.display = "flex";
-    $("statTotal").textContent = list.length;
-    $("statOccurrences").textContent = list.reduce((sum, i) => sum + (i.count || 0), 0);
-    $("statSampled").textContent = list.filter(i => !(i.fidelity ? i.fidelity.isExact : i.adjustedCount === 1)).length;
+  // The line under the title answers the screen's question in words: how many, how often, and
+  // whether the counts can be trusted as exact.
+  function renderSummary(list) {
+    const s = $("issuesSummary");
+    if (allIssues.length === 0) { s.textContent = "Errors grouped by cause, most recently seen first."; return; }
+    const events = list.reduce((sum, i) => sum + (i.count || 0), 0);
+    const estimated = list.filter((i) => !isExactOf(i)).length;
+    const shown = list.length === allIssues.length ? plural(list.length, "issue") : plural(list.length, "issue") + " of " + fmtNum(allIssues.length) + " loaded";
+    s.textContent = shown + ", " + plural(events, "event") + " in total. " +
+      (estimated === 0 ? "Every count is exact." : plural(estimated, "count") + " " + (estimated === 1 ? "is an estimate" : "are estimates") + " from sampling.") +
+      (nextCursor ? " Older issues are available below." : "");
   }
 
   function renderTable(list) {
     const body = $("issuesBody");
-    body.innerHTML = "";
-    if (allIssues.length === 0) {
-      $("issuesTable").style.display = "none";
-      $("empty").style.display = "block";
-      $("empty").textContent = "No issues yet.";
-      return;
-    }
+    body.textContent = "";
+    const empty = $("empty");
     if (list.length === 0) {
-      $("issuesTable").style.display = "none";
-      $("empty").style.display = "block";
-      $("empty").textContent = "No issues match this filter.";
+      $("issuesTable").hidden = true;
+      empty.hidden = false;
+      empty.textContent = "";
+      if (allIssues.length === 0) {
+        empty.appendChild(el("h2", null, "No errors reported yet"));
+        const p = el("p");
+        p.append("Errors appear here once a service using the SDK captures one, for example with ");
+        p.appendChild(el("code", null, "client.captureException(err)"));
+        p.append(".");
+        empty.appendChild(p);
+      } else {
+        empty.appendChild(el("h2", null, "No issues match this filter"));
+        const clear = el("button", null, "Clear the filter");
+        clear.addEventListener("click", () => { $("search").value = ""; $("fidelityFilter").value = "all"; renderAll(); });
+        empty.appendChild(clear);
+      }
       return;
     }
-    $("empty").style.display = "none";
-    $("issuesTable").style.display = "table";
+    empty.hidden = true;
+    $("issuesTable").hidden = false;
 
     for (const issue of list) {
-      const tr = document.createElement("tr");
-      tr.className = "issue-row" + (issue.fingerprint === selectedFingerprint ? " selected" : "");
-      const isExact = issue.fidelity ? issue.fidelity.isExact : issue.adjustedCount === 1;
-      const fidelityClass = isExact ? "badge-exact" : "badge-sampled";
-      const fidelityLabel = isExact ? "exact" : "~" + (issue.fidelity ? issue.fidelity.adjustedCount : issue.adjustedCount) + "x weighted";
-      const releaseChips = (issue.releases || []).slice(0, 3).map(r => `<span class="chip">${escapeHtml(r)}</span>`).join("") || '<span class="empty-note">—</span>';
-      tr.innerHTML =
-        `<td class="fp">${escapeHtml(issue.fingerprint)}</td>` +
-        `<td class="num">${issue.count}</td>` +
-        `<td class="num">${issue.usersAffected}</td>` +
-        `<td>${releaseChips}</td>` +
-        `<td>${escapeHtml(formatIST(issue.lastSeen))}</td>` +
-        `<td><span class="badge ${fidelityClass}">${fidelityLabel}</span></td>`;
+      const tr = el("tr", "issue" + (issue.fingerprint === selectedFingerprint ? " selected" : ""));
+      tr.dataset.fp = issue.fingerprint;
+
+      const idCell = el("td");
+      const btn = el("button", "issue-title");
+      btn.type = "button";
+      fillTitle(btn, issue.fingerprint);
+      idCell.appendChild(btn);
+      const meta = el("div", "issue-meta");
+      if (titles.get(issue.fingerprint)) meta.appendChild(el("span", "mono", issue.fingerprint));
+      meta.appendChild(el("span", null, "first seen " + ago(issue.firstSeen)));
+      if (!isExactOf(issue)) meta.appendChild(el("span", "pill warning", "≈ estimate, ×" + weightOf(issue) + " weight"));
+      idCell.appendChild(meta);
+
+      const count = el("td", "num"); count.appendChild(el("span", "fig", fmtNum(issue.count)));
+      const users = el("td", "num col-users"); users.appendChild(el("span", "fig", fmtNum(issue.usersAffected)));
+      const rel = el("td", "col-release");
+      const releases = issue.releases || [];
+      if (releases.length) {
+        rel.appendChild(el("span", "pill neutral mono", releases[releases.length - 1]));
+        if (releases.length > 1) rel.appendChild(el("span", "muted", " +" + (releases.length - 1)));
+      } else rel.appendChild(el("span", "muted", "—"));
+      const last = el("td", "num"); const w = el("span", "when", ago(issue.lastSeen)); w.title = formatIST(issue.lastSeen); last.appendChild(w);
+
+      tr.append(idCell, count, users, rel, last);
       tr.addEventListener("click", () => showDetail(issue));
       body.appendChild(tr);
     }
   }
 
-  function pct(sorted, list) { return list.length ? Math.round((sorted / list.length) * 100) : 0; }
+  function closeDetail(rerender = true) {
+    selectedFingerprint = null;
+    $("detail").hidden = true;
+    $("issuesSplit").classList.remove("has-detail");
+    if (rerender) renderAll();
+  }
 
   async function showDetail(issue) {
     selectedFingerprint = issue.fingerprint;
-    renderAll(); // to highlight the selected row
-    const backendUrl = $("backendUrl").value.replace(/\/$/, "");
-    const apiKey = $("apiKey").value;
+    renderAll();
     const detail = $("detail");
-    detail.style.display = "block";
+    detail.textContent = "";
+    detail.hidden = false;
+    $("issuesSplit").classList.add("has-detail");
 
-    const isExact = issue.fidelity ? issue.fidelity.isExact : issue.adjustedCount === 1;
-    const fidelityClass = isExact ? "badge-exact" : "badge-sampled";
-    const fidelityLabel = isExact ? "exact" : "~" + (issue.fidelity ? issue.fidelity.adjustedCount : issue.adjustedCount) + "x weighted";
-    const releaseChips = (issue.releases || []).map(r => `<span class="chip">${escapeHtml(r)}</span>`).join("") || '<span class="empty-note">none recorded</span>';
+    const t = titles.get(issue.fingerprint);
+    const head = el("div", "detail-head");
+    const top = el("div", "top");
+    const h = el("h2", null, t && t.type ? t.type : "Issue");
+    h.id = "detailTitle";
+    detail.setAttribute("aria-labelledby", "detailTitle");
+    const close = el("button", "quiet", "Close");
+    close.setAttribute("aria-label", "Close issue details");
+    close.addEventListener("click", () => closeDetail());
+    top.append(h, close);
+    head.appendChild(top);
+    const msgLine = el("p", "msg", t && t.message ? t.message : "");
+    head.appendChild(msgLine);
+    const fp = el("div", "fp");
+    fp.appendChild(el("span", "mono", issue.fingerprint));
+    const copyFp = el("button", "link", "Copy");
+    copyFp.setAttribute("aria-label", "Copy fingerprint");
+    copyFp.addEventListener("click", () => copyToClipboard(issue.fingerprint, copyFp));
+    fp.appendChild(copyFp);
+    if (!isExactOf(issue)) fp.appendChild(el("span", "pill warning", "≈ estimate, ×" + weightOf(issue) + " weight"));
+    head.appendChild(fp);
+    detail.appendChild(head);
 
-    const d = issue.duration || { p50: 0, p95: 0, p99: 0 };
-    const top = (issue.topEndpoints && issue.topEndpoints.top) || [];
+    const figs = el("div", "figures");
+    const fig = (k, v, title) => { const d = el("div"); d.appendChild(el("span", "k", k)); const s = el("span", "v", v); if (title) s.title = title; d.appendChild(s); figs.appendChild(d); };
+    fig("Events", fmtNum(issue.count));
+    fig("Users", fmtNum(issue.usersAffected));
+    fig("First seen", ago(issue.firstSeen), formatIST(issue.firstSeen));
+    fig("Last seen", ago(issue.lastSeen), formatIST(issue.lastSeen));
+    detail.appendChild(figs);
+
+    const dur = issue.duration || { p50: 0, p95: 0, p99: 0 };
+    const durBlock = el("section", "block");
+    const dh = el("h3", null, "Request duration");
+    dh.appendChild(el("span", "muted", "milliseconds"));
+    durBlock.appendChild(dh);
+    const pcts = el("div", "pcts");
+    for (const [k, v] of [["Median", dur.p50], ["95th percentile", dur.p95], ["99th percentile", dur.p99]]) {
+      const d = el("div"); d.appendChild(el("div", "k", k)); d.appendChild(el("div", "v", fmtNum(v))); pcts.appendChild(d);
+    }
+    durBlock.appendChild(pcts);
+    detail.appendChild(durBlock);
+
+    const top5 = (issue.topEndpoints && issue.topEndpoints.top) || [];
     const other = (issue.topEndpoints && issue.topEndpoints.other) || 0;
-    const maxEp = Math.max(1, ...top.map(e => e.count), other);
+    const epBlock = el("section", "block");
+    epBlock.appendChild(el("h3", null, "Where it happens"));
+    if (top5.length === 0 && other === 0) {
+      epBlock.appendChild(el("p", "muted", "No endpoint was recorded with these events."));
+    } else {
+      const rows = top5.map((e) => [e.endpoint, e.count]).concat(other > 0 ? [["Other endpoints", other]] : []);
+      const max = Math.max(1, ...rows.map((r) => r[1]));
+      const bars = el("div", "bars");
+      for (const [name, n] of rows) {
+        const r = el("div", "bar-row");
+        const nm = el("span", "name", name); nm.title = name;
+        r.append(nm, el("span", null, fmtNum(n)));
+        const track = el("div", "track"); const fill = el("div", "fill"); fill.style.width = Math.max(1, Math.round((n / max) * 100)) + "%";
+        track.appendChild(fill); r.appendChild(track);
+        bars.appendChild(r);
+      }
+      epBlock.appendChild(bars);
+    }
+    detail.appendChild(epBlock);
 
-    detail.innerHTML = `
-      <div class="dhead">
-        <div class="fp mono">${escapeHtml(issue.fingerprint)}</div>
-        <div style="display:flex; gap:6px; align-items:center;">
-          <span class="badge ${fidelityClass}">${fidelityLabel}</span>
-          <button class="ghost" id="closeDetailBtn">Close ✕</button>
-        </div>
-      </div>
-      <div class="section">
-        <h3>Overview</h3>
-        <div class="kv-grid">
-          <div><div class="k">Count</div><div class="v">${issue.count}</div></div>
-          <div><div class="k">Users affected</div><div class="v">${issue.usersAffected}</div></div>
-          <div><div class="k">Adjusted count</div><div class="v">${issue.adjustedCount}</div></div>
-          <div><div class="k">First seen</div><div class="v">${escapeHtml(formatIST(issue.firstSeen))}</div></div>
-          <div><div class="k">Last seen</div><div class="v">${escapeHtml(formatIST(issue.lastSeen))}</div></div>
-          <div><div class="k">Releases</div><div class="v">${releaseChips}</div></div>
-        </div>
-      </div>
-      <div class="section">
-        <h3>Duration percentiles (ms)</h3>
-        <div class="pct-row">
-          <div class="pct-box"><div class="n">${d.p50}</div><div class="l">p50</div></div>
-          <div class="pct-box"><div class="n">${d.p95}</div><div class="l">p95</div></div>
-          <div class="pct-box"><div class="n">${d.p99}</div><div class="l">p99</div></div>
-        </div>
-      </div>
-      <div class="section">
-        <h3>Top endpoints</h3>
-        ${top.length === 0 && other === 0
-          ? '<span class="empty-note">No endpoint data recorded.</span>'
-          : top.map(e => `
-              <div class="ep-row">
-                <span class="ep-name" title="${escapeHtml(e.endpoint)}">${escapeHtml(e.endpoint)}</span>
-                <span class="ep-bar-track"><span class="ep-bar-fill" style="width:${pct(e.count, [{count:maxEp}])}%"></span></span>
-                <span class="ep-count">${e.count}</span>
-              </div>`).join("") +
-            (other > 0 ? `
-              <div class="ep-row">
-                <span class="ep-name">other</span>
-                <span class="ep-bar-track"><span class="ep-bar-fill" style="width:${pct(other, [{count:maxEp}])}%"></span></span>
-                <span class="ep-count">${other}</span>
-              </div>` : "")}
-      </div>
-      <div class="section">
-        <h3>Exemplars</h3>
-        <div id="exemplars">Loading…</div>
-      </div>
-      <div class="section">
-        <details class="raw">
-          <summary>Raw JSON</summary>
-          <pre>${escapeHtml(JSON.stringify(issue, null, 2))}</pre>
-        </details>
-      </div>
-    `;
-    $("closeDetailBtn").addEventListener("click", () => {
-      detail.style.display = "none";
-      selectedFingerprint = null;
-      renderAll();
-    });
+    const relBlock = el("section", "block");
+    relBlock.appendChild(el("h3", null, "Releases"));
+    const chips = el("div", "chips");
+    for (const r of issue.releases || []) chips.appendChild(el("span", "pill neutral mono", r));
+    if (!(issue.releases || []).length) chips.appendChild(el("span", "muted", "No release was recorded with these events."));
+    relBlock.appendChild(chips);
+    detail.appendChild(relBlock);
+
+    const evBlock = el("section", "block");
+    evBlock.appendChild(el("h3", null, "Example events"));
+    const evList = el("div");
+    evList.appendChild(el("p", "muted", "Loading example events…"));
+    evBlock.appendChild(evList);
+    detail.appendChild(evBlock);
+
+    const trailBlock = el("section", "block");
+    trailBlock.hidden = true;
+    detail.appendChild(trailBlock);
+
+    const rawBlock = el("section", "block");
+    const raw = el("details", "raw");
+    raw.appendChild(el("summary", null, "Raw JSON"));
+    raw.appendChild(el("pre", "code", JSON.stringify(issue, null, 2)));
+    rawBlock.appendChild(raw);
+    detail.appendChild(rawBlock);
+
+    if (window.matchMedia("(max-width: 1199px)").matches) detail.scrollIntoView({ block: "start" });
 
     try {
-      const res = await fetch(backendUrl + "/issues/" + encodeURIComponent(issue.fingerprint) + "/exemplars", {
-        headers: { Authorization: "Bearer " + apiKey },
-      });
-      if (!res.ok) {
-        $("exemplars").innerHTML = `<span class="empty-note">Error loading exemplars: HTTP ${res.status}</span>`;
-        return;
+      const data = await api("/issues/" + encodeURIComponent(issue.fingerprint) + "/exemplars");
+      if (selectedFingerprint !== issue.fingerprint) return;
+      const exemplars = data.exemplars || [];
+      const first = exemplars[0];
+      if (first && !titles.get(issue.fingerprint)) {
+        titles.set(issue.fingerprint, { type: first.error ? first.error.type : first.type, message: first.error ? first.error.message : "" });
+        h.textContent = titles.get(issue.fingerprint).type || "Issue";
+        msgLine.textContent = titles.get(issue.fingerprint).message;
+        updateRowTitle(issue.fingerprint);
       }
-      const data = await res.json();
-      renderExemplars(data.exemplars || []);
+      renderExemplars(evList, exemplars);
+      const traced = exemplars.find((e) => e.trace && e.trace.traceId);
+      if (traced) renderTrail(trailBlock, traced, issue.fingerprint);
     } catch (err) {
-      $("exemplars").innerHTML = `<span class="empty-note">Request failed: ${escapeHtml(err.message)}</span>`;
+      evList.textContent = "";
+      evList.appendChild(el("p", "muted", "Couldn’t load the example events. " + err.message));
     }
   }
 
-  function renderExemplars(exemplars) {
-    const container = $("exemplars");
+  const ROLE = { first: "First seen", last: "Most recent", slowest: "Slowest", "one-per-release": "First in its release", "one-novel-stack": "New stack trace" };
+
+  function renderExemplars(container, exemplars) {
+    container.textContent = "";
     if (exemplars.length === 0) {
-      container.innerHTML = '<span class="empty-note">No exemplars recorded for this issue yet.</span>';
+      container.appendChild(el("p", "muted", "No example event has been kept for this issue yet."));
       return;
     }
-    container.innerHTML = "";
     exemplars.forEach((ev, i) => {
-      const div = document.createElement("div");
-      div.className = "exemplar";
-      const source = ev.source ? `${ev.source.file}:${ev.source.line} (${ev.source.function})` : "";
-      const message = ev.error ? ev.error.message : "(no message)";
-      const errType = ev.error ? ev.error.type : ev.type;
-      const stacktrace = ev.error ? ev.error.stacktrace : "";
-      const stackId = "stack" + i;
-      div.innerHTML =
-        `<div class="exemplar-top">` +
-          `<span class="role-badge">${escapeHtml(ev.exemplarRole)}</span>` +
-          `<span class="exemplar-meta">${escapeHtml(formatIST(ev.timestamp))}</span>` +
-          `<span class="exemplar-meta mono">trace ${escapeHtml(ev.trace ? ev.trace.traceId : "?")}</span>` +
-          (ev.trace && ev.trace.traceId
-            ? `<button class="ghost link-btn" data-trace-logs="${escapeHtml(ev.trace.traceId)}">View logs for this request →</button>`
-            : "") +
-        `</div>` +
-        (source ? `<div class="exemplar-source">${escapeHtml(source)}</div>` : "") +
-        `<div class="exemplar-message"><strong>${escapeHtml(errType || "")}:</strong> ${escapeHtml(message)}</div>` +
-        (stacktrace ? `
-          <div class="stack-wrap">
-            <button class="ghost copy-btn" data-copy-target="${stackId}">Copy</button>
-            <pre id="${stackId}">${escapeHtml(stacktrace)}</pre>
-          </div>` : "");
-      container.appendChild(div);
-    });
-    container.querySelectorAll("[data-trace-logs]").forEach(btn => {
-      btn.addEventListener("click", () => openLogsForTrace(btn.dataset.traceLogs));
-    });
-    container.querySelectorAll("[data-copy-target]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        const text = document.getElementById(btn.dataset.copyTarget).textContent;
-        copyToClipboard(text, btn);
-      });
+      const box = el("article", "event");
+      const meta = el("div", "event-meta");
+      meta.appendChild(el("span", "role", ROLE[ev.exemplarRole] || ev.exemplarRole));
+      const when = el("span", null, ago(ev.timestamp)); when.title = formatIST(ev.timestamp); meta.appendChild(when);
+      if (ev.service) meta.appendChild(el("span", null, ev.service.name + " " + ev.service.version + ", " + ev.service.environment));
+      box.appendChild(meta);
+      if (ev.source) box.appendChild(el("div", "where", ev.source.file + ":" + ev.source.line + " in " + ev.source.function));
+      const what = el("div", "what");
+      what.appendChild(el("strong", null, (ev.error ? ev.error.type : ev.type) + ": "));
+      what.append(ev.error ? ev.error.message : "No message");
+      box.appendChild(what);
+      if (ev.error && ev.error.stacktrace) {
+        const d = el("details", "stack");
+        if (i === 0) d.open = true;
+        d.appendChild(el("summary", null, "Stack trace"));
+        const wrap = el("div", "code-wrap");
+        const pre = el("pre", "code", ev.error.stacktrace);
+        const copy = el("button", "copy", "Copy");
+        copy.setAttribute("aria-label", "Copy stack trace");
+        copy.addEventListener("click", () => copyToClipboard(ev.error.stacktrace, copy));
+        wrap.append(pre, copy);
+        d.appendChild(wrap);
+        box.appendChild(d);
+      }
+      if (ev.trace && ev.trace.traceId) {
+        const go = el("button", "link", "View this request’s logs");
+        go.addEventListener("click", () => openLogsForTrace(ev.trace.traceId));
+        box.appendChild(go);
+      }
+      container.appendChild(box);
     });
   }
 
-  function copyToClipboard(text, btn) {
-    const done = () => { const old = btn.textContent; btn.textContent = "Copied"; setTimeout(() => btn.textContent = old, 1200); };
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(done).catch(() => {});
+  // What the failing request did before it failed: its own log lines, in order, under the error.
+  // Errors and logs meet at the trace id; this is that meeting, shown where the error is read.
+  async function renderTrail(block, ev, fp) {
+    block.hidden = false;
+    block.textContent = "";
+    const h = el("h3", null, "What this request logged");
+    block.appendChild(h);
+    const list = el("div", "trail");
+    list.appendChild(el("p", "muted", "Loading…"));
+    block.appendChild(list);
+    try {
+      const data = await api("/logs?" + new URLSearchParams({ traceId: ev.trace.traceId, limit: "12" }).toString());
+      if (selectedFingerprint !== fp) return;
+      const lines = (data.logs || []).slice().reverse(); // oldest first: read it as a story
+      list.textContent = "";
+      if (lines.length === 0) {
+        list.appendChild(el("p", "muted", "This request wrote no log lines. Lines are linked to a request when the service uses the SDK’s requestHandler."));
+        return;
+      }
+      h.appendChild(el("span", "muted", plural(lines.length, "line") + (data.nextCursor ? ", more in Logs" : "")));
+      for (const l of lines) {
+        const r = el("div", "trail-row lvl-" + l.level);
+        r.append(el("span", "t", tf.format(new Date(l.timestamp))), el("span", "log-level", l.level), el("span", "m", l.message));
+        list.appendChild(r);
+      }
+      const foot = el("div", "trail-foot");
+      const open = el("button", "link", "Open in Logs");
+      open.addEventListener("click", () => openLogsForTrace(ev.trace.traceId));
+      foot.appendChild(open);
+      block.appendChild(foot);
+    } catch (err) {
+      list.textContent = "";
+      list.appendChild(el("p", "muted", "Couldn’t load this request’s logs. " + err.message));
     }
   }
 
-  // Backend timestamps are always ISO UTC (docs/schema.md); the dashboard displays them in IST
-  // (UTC+5:30, no DST) since that's this org's own timezone — the wire format itself stays UTC.
-  function formatIST(isoString) {
-    const d = new Date(isoString);
-    if (isNaN(d.getTime())) return isoString;
-    const istMs = d.getTime() + (5 * 60 + 30) * 60 * 1000;
-    const ist = new Date(istMs);
-    const pad = (n) => String(n).padStart(2, "0");
-    return (
-      ist.getUTCFullYear() + "-" + pad(ist.getUTCMonth() + 1) + "-" + pad(ist.getUTCDate()) +
-      " " + pad(ist.getUTCHours()) + ":" + pad(ist.getUTCMinutes()) + ":" + pad(ist.getUTCSeconds()) +
-      " IST"
-    );
-  }
-
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, (c) => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
-    }[c]));
-  }
-
-  document.querySelectorAll("#issuesTable th").forEach(th => {
-    th.addEventListener("click", () => {
-      const key = th.dataset.key;
+  document.querySelectorAll("#issuesTable th button.sort").forEach((b) => {
+    b.addEventListener("click", () => {
+      const key = b.closest("th").dataset.key;
       if (sortKey === key) sortDir = sortDir === "asc" ? "desc" : "asc";
-      else { sortKey = key; sortDir = "asc"; }
+      else { sortKey = key; sortDir = key === "message" || key === "releases" ? "asc" : "desc"; }
       renderAll();
     });
   });
   $("search").addEventListener("input", renderAll);
   $("fidelityFilter").addEventListener("change", renderAll);
   $("loadMoreBtn").addEventListener("click", () => loadIssues(true));
-</script>
+  $("issuesRefreshBtn").addEventListener("click", () => loadIssues(false));
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && selectedFingerprint && !$("connDialog").open) closeDetail(); });
 
-<script>
-  /* =====================================================================================
-     Views (Issues | Logs) and the Logs viewer.
-     Everything that comes off the wire is untrusted text (a log line can contain anything),
-     so log content is only ever inserted with textContent — never as HTML.
-     ===================================================================================== */
+  /* =============================================================================================
+     Views and the Logs viewer
+     ============================================================================================= */
   const LEVELS = ["debug", "info", "warn", "error"];
   const MAX_LINES = 2000;        // in-memory cap while tailing
   const TAIL_INTERVAL_MS = 3000;
@@ -699,27 +1090,39 @@
   let facetsLoadedFor = "";
   let issuesRequested = false;   // has the Issues view fetched yet (it loads lazily when first shown)
 
-  const conn = () => ({ url: $("backendUrl").value.replace(/\/$/, ""), key: $("apiKey").value });
+  const hasKey = () => !!conn().key;
 
   function setView(view, opts) {
     currentView = view;
-    for (const v of ["issues", "logs"]) {
-      $("view-" + v).style.display = v === view ? "" : "none";
-      $("tab-" + v).setAttribute("aria-selected", String(v === view));
-    }
+    const firstRun = !hasKey();
+    if (firstRun && !$("firstRun")) $("main").prepend($("firstRunTpl").content.cloneNode(true));
+    if (!firstRun && $("firstRun")) { placeConnectionForm(); $("firstRun").remove(); }
+    for (const v of ["issues", "logs"]) $("view-" + v).hidden = firstRun || v !== view;
+    document.querySelectorAll("a[data-view]").forEach((a) => {
+      if (a.dataset.view === view) a.setAttribute("aria-current", "page");
+      else a.removeAttribute("aria-current");
+    });
     if (!opts || !opts.keepHash) history.replaceState(null, "", "#" + view);
+    if (firstRun) { placeConnectionForm(); return; }
     if (view === "logs") {
-      if (logs.length === 0 && $("apiKey").value) { loadFacets(); loadLogs(false); }
+      if (logs.length === 0) { loadFacets(); loadLogs(false); }
     } else {
       stopTail();
       // Opening the page straight at #logs never loaded issues; do it the first time they're shown.
-      if (!issuesRequested && $("apiKey").value) { issuesRequested = true; loadIssues(false); }
+      if (!issuesRequested) { issuesRequested = true; loadIssues(false); }
     }
   }
 
+  // A new or changed connection: forget what the old one loaded, then let setView load the view
+  // that is showing (and the other one lazily, when it is first opened).
   function connect() {
-    if (currentView === "logs") { facetsLoadedFor = ""; loadFacets(); loadLogs(false); }
-    else { issuesRequested = true; loadIssues(false); }
+    saveConnection();
+    placeConnectionForm();
+    facetsLoadedFor = "";
+    issuesRequested = false;
+    allIssues = []; nextCursor = undefined;
+    logs = []; seenLogIds = new Set(); logsNextCursor = undefined; stopTail();
+    setView(currentView, { keepHash: true });
   }
 
   /* ---------- logs: fetching ---------- */
@@ -741,28 +1144,24 @@
     return minutes > 0 ? new Date(Date.now() - minutes * 60000).toISOString() : undefined;
   }
 
-  function setLogsStatus(text, isError) {
-    $("logsStatus").textContent = text;
-    $("logsStatus").className = isError ? "err" : "";
+  function setLogsStatus(text, isError, retry) {
+    const e = $("logsError");
+    e.textContent = "";
+    e.className = "status" + (isError ? " err" : "");
+    if (isError) {
+      e.textContent = text;
+      if (retry) { const b = el("button", null, "Try again"); b.addEventListener("click", retry); e.appendChild(b); }
+    } else {
+      $("logsStatus").textContent = text;
+    }
   }
 
-  async function fetchLogs(params) {
-    const { url, key } = conn();
-    const res = await fetch(url + "/logs?" + params.toString(), { headers: { Authorization: "Bearer " + key } });
-    if (!res.ok) {
-      let detail = "";
-      try { detail = (await res.json()).error || ""; } catch (_) {}
-      throw new Error("HTTP " + res.status + (detail ? " — " + detail : res.status === 401 ? " (check API key)" : ""));
-    }
-    return res.json();
-  }
+  const fetchLogs = (params) => api("/logs?" + params.toString());
 
   async function loadLogs(append) {
     const seq = ++logsReqSeq;
-    const { url, key } = conn();
-    localStorage.setItem("bb_backend_url", url);
-    localStorage.setItem("bb_api_key", key);
-    setLogsStatus("Loading…");
+    saveConnection();
+    setLogsStatus(append ? "Loading older lines…" : "Loading…");
     try {
       const params = append
         ? logQueryParams({ cursor: logsNextCursor, limit: 200 })
@@ -778,46 +1177,44 @@
       setLogsStatus(logsSummary());
     } catch (err) {
       if (seq !== logsReqSeq) return;
-      setLogsStatus("Request failed: " + err.message, true);
+      setLogsStatus(err.message, true, () => loadLogs(append));
     }
   }
 
   function logsSummary() {
-    const errors = logs.filter(l => l.level === "error").length;
-    const warns = logs.filter(l => l.level === "warn").length;
-    let t = logs.length + " line" + (logs.length === 1 ? "" : "s") + " loaded";
-    if (logs.length) t += " · " + errors + " error" + (errors === 1 ? "" : "s") + " · " + warns + " warning" + (warns === 1 ? "" : "s");
-    if (logsNextCursor && !logsTrimmed) t += " · older lines available";
-    if (logsTrimmed) t += " · oldest lines trimmed while live — turn Live off to browse history";
-    if (tailGap) t += " · gap: lines arrived faster than Live could fetch, some were skipped — turn Live off to browse history";
-    return t + " · times in IST";
+    if (logs.length === 0) return "Every line your services wrote, newest first. Times in IST.";
+    const errors = logs.filter((l) => l.level === "error").length;
+    const warns = logs.filter((l) => l.level === "warn").length;
+    let t = plural(logs.length, "line") + " loaded, with " + plural(errors, "error") + " and " + plural(warns, "warning") + ".";
+    if (logsNextCursor && !logsTrimmed) t += " Older lines are available below.";
+    if (logsTrimmed) t += " The oldest lines were dropped while Live was on; turn it off to browse history.";
+    if (tailGap) t += " Lines arrived faster than Live could fetch them, so some were skipped; turn Live off to browse them.";
+    return t + " Times in IST.";
   }
 
   async function loadFacets() {
     const { url, key } = conn();
     if (!key || facetsLoadedFor === url + key) return;
     try {
-      const res = await fetch(url + "/logs/facets", { headers: { Authorization: "Bearer " + key } });
-      if (!res.ok) return;
-      const f = await res.json();
+      const f = await api("/logs/facets");
       fillSelect($("logService"), "All services", f.services || []);
       fillSelect($("logEnv"), "All environments", f.environments || []);
       facetsLoadedFor = url + key;
     } catch (_) { /* filters simply stay at "All" */ }
   }
 
-  function fillSelect(el, allLabel, values) {
-    const keep = el.value;
-    el.textContent = "";
+  function fillSelect(select, allLabel, values) {
+    const keep = select.value;
+    select.textContent = "";
     const all = document.createElement("option");
     all.value = ""; all.textContent = allLabel;
-    el.appendChild(all);
+    select.appendChild(all);
     for (const v of values) {
       const o = document.createElement("option");
       o.value = v; o.textContent = v;
-      el.appendChild(o);
+      select.appendChild(o);
     }
-    el.value = values.includes(keep) ? keep : "";
+    select.value = values.includes(keep) ? keep : "";
   }
 
   /* ---------- logs: live tail ---------- */
@@ -872,7 +1269,7 @@
       renderLogs();
       setLogsStatus(logsSummary());
     } catch (err) {
-      setLogsStatus("Live update failed: " + err.message, true);
+      setLogsStatus("Live update failed. " + err.message, true);
     } finally {
       tailBusy = false;
     }
@@ -885,82 +1282,69 @@
 
   /* ---------- logs: rendering ---------- */
 
-  function istParts(iso) {
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return null;
-    const ist = new Date(d.getTime() + (5 * 60 + 30) * 60 * 1000);
-    const pad = (n, w) => String(n).padStart(w || 2, "0");
-    return {
-      date: ist.getUTCFullYear() + "-" + pad(ist.getUTCMonth() + 1) + "-" + pad(ist.getUTCDate()),
-      time: pad(ist.getUTCHours()) + ":" + pad(ist.getUTCMinutes()) + ":" + pad(ist.getUTCSeconds()) + "." + pad(ist.getUTCMilliseconds(), 3),
-    };
-  }
-
-  function el(tag, className, text) {
-    const e = document.createElement(tag);
-    if (className) e.className = className;
-    if (text !== undefined) e.textContent = text;
-    return e;
-  }
-
   function renderLogs() {
     const list = $("logsList");
     list.textContent = "";
     const empty = $("logsEmpty");
     if (logs.length === 0) {
-      empty.style.display = "block";
+      empty.hidden = false;
+      empty.textContent = "";
       const filtered = $("logQ").value.trim() || $("logService").value || $("logEnv").value || traceFilter || selectedLevels.size < LEVELS.length;
-      empty.textContent = traceFilter
-        ? "No log lines recorded for this trace. (Logs are only linked to a request when the app uses the Express integration's requestHandler.)"
-        : filtered ? "No log lines match these filters."
-        : "No log lines in this time range yet. Send some with client.log.info(\"hello\") — see docs/api.md.";
+      if (traceFilter) {
+        empty.appendChild(el("h2", null, "This request wrote no log lines"));
+        empty.appendChild(el("p", null, "Lines are linked to a request when the service uses the SDK’s requestHandler."));
+      } else if (filtered) {
+        empty.appendChild(el("h2", null, "No lines match these filters"));
+        empty.appendChild(el("p", null, "Widen the time range, or clear the search and filters."));
+      } else {
+        empty.appendChild(el("h2", null, "No log lines in this time range"));
+        const p = el("p");
+        p.append("Lines appear here once a service writes one, for example with ");
+        p.appendChild(el("code", null, "client.log.info(\"order placed\")"));
+        p.append(". Try a longer time range if you expected some.");
+        empty.appendChild(p);
+      }
     } else {
-      empty.style.display = "none";
+      empty.hidden = true;
     }
 
-    const today = istParts(new Date().toISOString());
     const frag = document.createDocumentFragment();
     for (const l of logs) {
-      const t = istParts(l.timestamp);
-      const row = el("div", "log-row lvl-" + l.level + (l.logId === openLogId ? " open" : ""));
+      const isOpen = l.logId === openLogId;
+      const row = el("div", "log-row lvl-" + l.level + (isOpen ? " open" : ""));
       row.tabIndex = 0;
       row.setAttribute("role", "button");
-      row.setAttribute("aria-expanded", String(l.logId === openLogId));
-      row.appendChild(el("span", "log-time", t ? (t.date === today.date ? t.time : t.date.slice(5) + " " + t.time) : l.timestamp));
-      row.appendChild(el("span", "log-level", l.level));
-      row.appendChild(el("span", "log-svc", l.service ? l.service.name : ""));
-      row.appendChild(el("span", "log-msg", l.message));
-      const toggle = () => { openLogId = openLogId === l.logId ? null : l.logId; renderLogs(); };
+      row.setAttribute("aria-expanded", String(isOpen));
+      const time = el("span", "log-time", logTime(l.timestamp)); time.title = formatIST(l.timestamp);
+      row.append(time, el("span", "log-level", l.level), el("span", "log-svc", l.service ? l.service.name : ""), el("span", "log-msg", l.message));
+      const toggle = () => { openLogId = isOpen ? null : l.logId; renderLogs(); };
       row.addEventListener("click", toggle);
       row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
       frag.appendChild(row);
-      if (l.logId === openLogId) frag.appendChild(renderLogDetail(l));
+      if (isOpen) frag.appendChild(renderLogDetail(l));
     }
     list.appendChild(frag);
-    $("logsMoreBtn").style.display = logsNextCursor && !logsTrimmed ? "inline-block" : "none";
+    $("logsMoreBtn").hidden = !(logsNextCursor && !logsTrimmed);
   }
 
   function renderLogDetail(l) {
     const d = el("div", "log-detail");
-    d.appendChild(el("pre", "full", l.message));
+    d.appendChild(el("pre", "code", l.message));
 
-    const kv = el("div", "kv-grid");
-    const add = (k, v) => { const c = el("div"); c.appendChild(el("div", "k", k)); c.appendChild(el("div", "v", v)); kv.appendChild(c); };
-    const t = istParts(l.timestamp);
-    add("Time (IST)", t ? t.date + " " + t.time : l.timestamp);
+    const kv = el("div", "kv");
+    const add = (k, v, mono) => { const c = el("div"); c.appendChild(el("div", "k", k)); c.appendChild(el("div", "v" + (mono ? " mono" : ""), v)); kv.appendChild(c); };
+    add("Time", formatIST(l.timestamp));
     add("Service", l.service ? l.service.name : "—");
     add("Version", l.service ? l.service.version : "—");
     add("Environment", l.service ? l.service.environment : "—");
-    add("Trace", l.trace ? l.trace.traceId : "none");
-    add("Log ID", l.logId);
+    add("Request", l.trace ? l.trace.traceId : "—", !!l.trace);
+    add("Line ID", l.logId, true);
     d.appendChild(kv);
 
-    d.appendChild(el("h4", null, "Fields"));
     const entries = Object.entries(l.fields || {});
-    if (entries.length === 0) {
-      d.appendChild(el("span", "empty-note", "No structured fields on this line."));
-    } else {
-      const table = el("table", "field-table");
+    if (entries.length) {
+      const table = el("table", "fields");
+      table.setAttribute("aria-label", "Fields");
       for (const [k, v] of entries) {
         const tr = el("tr");
         tr.appendChild(el("td", null, k));
@@ -968,15 +1352,17 @@
         table.appendChild(tr);
       }
       d.appendChild(table);
+    } else {
+      d.appendChild(el("p", "muted", "No structured fields on this line."));
     }
 
-    const actions = el("div", "detail-actions");
-    if (l.trace && l.trace.traceId) {
+    const actions = el("div", "row-actions");
+    if (l.trace && l.trace.traceId && traceFilter !== l.trace.traceId) {
       const b = el("button", null, "Show everything in this request");
       b.addEventListener("click", (e) => { e.stopPropagation(); openLogsForTrace(l.trace.traceId); });
       actions.appendChild(b);
     }
-    const copy = el("button", null, "Copy JSON");
+    const copy = el("button", null, "Copy as JSON");
     copy.addEventListener("click", (e) => { e.stopPropagation(); copyToClipboard(JSON.stringify(l, null, 2), copy); });
     actions.appendChild(copy);
     d.appendChild(actions);
@@ -988,31 +1374,31 @@
   function setTraceFilter(traceId) {
     traceFilter = traceId || "";
     $("traceChip").hidden = !traceFilter;
-    $("traceChipText").textContent = traceFilter ? "trace " + traceFilter : "";
+    $("traceChipText").textContent = traceFilter ? "Request " + traceFilter : "";
   }
 
   // The jump from an error to everything that request logged. Trace ids can be old, so the time
-  // range is widened to everything retained — the trace id itself is the narrowing filter.
+  // range is widened to everything retained; the trace id itself is the narrowing filter.
   function openLogsForTrace(traceId) {
     setTraceFilter(traceId);
     $("logRange").value = "0";
     setView("logs", { keepHash: false });
     loadFacets();
     loadLogs(false);
+    $("main").focus({ preventScroll: true });
+    window.scrollTo({ top: 0 });
   }
 
   function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
   const reloadLogs = () => loadLogs(false);
 
-  document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => setView(b.dataset.view)));
-  $("loadBtn").addEventListener("click", connect);
   $("logQ").addEventListener("input", debounce(reloadLogs, 300));
   for (const id of ["logRange", "logService", "logEnv"]) $(id).addEventListener("change", reloadLogs);
   $("logsRefreshBtn").addEventListener("click", reloadLogs);
   $("logsMoreBtn").addEventListener("click", () => loadLogs(true));
   $("tailBtn").addEventListener("click", () => ($("tailBtn").getAttribute("aria-pressed") === "true" ? stopTail() : startTail()));
   $("traceChipClear").addEventListener("click", () => { setTraceFilter(""); reloadLogs(); });
-  document.querySelectorAll("#levelChips button").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("#levelChips button").forEach((b) => b.addEventListener("click", () => {
     const lvl = b.dataset.level;
     if (selectedLevels.has(lvl)) { if (selectedLevels.size === 1) return; selectedLevels.delete(lvl); }
     else selectedLevels.add(lvl);
@@ -1021,14 +1407,47 @@
   }));
   document.addEventListener("visibilitychange", () => { if (!document.hidden && tailTimer) tailTick(); });
 
+  /* ---------- connection form: in the sheet on first run, in a dialog afterwards ---------- */
+
+  function placeConnectionForm() {
+    const form = $("connForm");
+    const slot = hasKey() ? $("dialogSlot") : $("firstRunSlot");
+    if (form.parentElement !== slot) slot.appendChild(form);
+    $("loadBtn").textContent = hasKey() ? "Save and reload" : "Connect";
+  }
+
+  function openConnection() {
+    if (!hasKey()) { $("backendUrl").focus(); return; }
+    placeConnectionForm();
+    $("connError").textContent = "";
+    $("connDialog").showModal();
+  }
+
+  $("connForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const { url, key } = conn();
+    try { new URL(url); } catch (_) { $("connError").textContent = "Enter a full URL, starting with http:// or https://."; $("backendUrl").focus(); return; }
+    if (!key) { $("connError").textContent = "Enter an API key."; $("apiKey").focus(); return; }
+    $("connError").textContent = "";
+    if ($("connDialog").open) $("connDialog").close();
+    connect();
+  });
+  $("connectionBtn").addEventListener("click", openConnection);
+  // On a phone the dialog is also where the theme switch lives, so it opens even before a key
+  // exists (the form itself then stays on the first-run screen).
+  $("phoneSettingsBtn").addEventListener("click", () => { placeConnectionForm(); $("connDialog").showModal(); });
+  $("connDialogClose").addEventListener("click", () => $("connDialog").close());
+  $("connDialog").addEventListener("close", placeConnectionForm);
+
+  window.addEventListener("hashchange", () => {
+    const v = location.hash === "#logs" ? "logs" : "issues";
+    if (v !== currentView) setView(v, { keepHash: true });
+  });
+
   // Startup: honor #logs / #issues so a view is linkable, then load whichever is showing.
   (function init() {
-    const wanted = location.hash === "#logs" ? "logs" : "issues";
-    if ($("apiKey").value) {
-      setView(wanted, { keepHash: true }); // loads whichever view is showing
-    } else if (wanted === "logs") {
-      setView("logs", { keepHash: true });
-    }
+    updateScope();
+    setView(location.hash === "#logs" ? "logs" : "issues", { keepHash: true });
   })();
 </script>
 </body>
