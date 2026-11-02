@@ -7,8 +7,8 @@
 > openapi`; a unit test fails if it's stale or a route is undocumented.
 
 Implemented in `packages/backend/src/server.ts`. Every route requires
-`Authorization: Bearer <apiKey>`; a missing or unrecognized key returns `401` before any tenant
-database is touched (see [`schema.md`](schema.md) on why that ordering is the actual isolation
+`Authorization: Bearer <apiKey>`; a missing, unrecognized or revoked key returns `401`, and a key of
+a disabled organization `403`, before any tenant database is touched (see [`schema.md`](schema.md) on why that ordering is the actual isolation
 mechanism).
 
 ## `POST /ingest`
@@ -205,16 +205,61 @@ admin token is configured, the route answers `404` as if it didn't exist.
 `POST /admin/orgs` also accepts an optional `"logRetentionDays"` (0 to 3650; 0 keeps logs
 forever). Without it, the org uses the backend's `BUGBUSTER_LOG_RETENTION_DAYS`.
 
+It also accepts `"keyName"` for the first key (default `"Default key"`), and returns that key's
+`keyId` with it.
+
+The admin page at **`GET /admin`** uses every route below. It's a web page, served only when an
+admin token is configured.
+
+## `GET /admin/orgs`
+
+Every org with its status, the retention in effect, and its keys. Keys are listed by name with
+their dates, never the key or its hash.
+
+```json
+{ "orgs": [{
+  "orgId": "acme", "name": "Acme Corp", "dbName": "bugbuster_org_acme",
+  "createdAt": "2026-10-01T09:00:00.000Z", "disabled": false,
+  "logRetentionDays": 30, "retentionOverridden": true,
+  "keys": [{ "keyId": "key_3f9a1c2d4e5b", "orgId": "acme", "name": "checkout-api production",
+             "createdAt": "2026-10-01T09:00:00.000Z", "lastUsedAt": "2026-11-03T08:12:00.000Z" }]
+}] }
+```
+
 ## `PATCH /admin/orgs/:orgId`
 
-Changes an org's log retention. Admin token, as above.
+Changes an org. Admin token, as above. Send one or more of:
 
-- **Body:** `{ "logRetentionDays": 30 }`: a whole number of days from 0 (keep forever) to 3650, or
-  `null` to go back to the backend default.
-- **Effect:** applied to the org's TTL index immediately, so it holds for every backend process.
-- **`200`:** `{ "orgId", "name", "dbName", "logRetentionDays", "retentionOverridden" }`, where
-  `logRetentionDays` is the retention now in effect.
-- **`400`** invalid body · **`401`** wrong admin token · **`404`** no such org, or admin disabled.
+- `"name"`: the display name.
+- `"logRetentionDays"`: a whole number of days from 0 (keep forever) to 3650, or `null` to go back
+  to the backend default. Applied to the org's TTL index immediately, for every backend process.
+- `"disabled": true | false`: a disabled org's keys get **`403 organization is disabled`** on every
+  route, both sending and reading, until it is enabled again. Its data is kept. This takes effect
+  within a minute on every backend instance.
+
+**`200`:** the org, in the `GET /admin/orgs` shape · **`400`** nothing to change, or an invalid
+value · **`401`** wrong admin token · **`404`** no such org, or admin disabled.
+
+## `POST /admin/orgs/:orgId/keys` and `DELETE /admin/orgs/:orgId/keys/:keyId`
+
+- **`POST`** with `{ "name": "orders-worker production" }` creates another key and returns it
+  (**once**, with `Cache-Control: no-store`).
+- **`DELETE`** revokes one key. Requests with it get `401 invalid api key` from then on: at once on
+  the instance that handled the revoke, and within a minute on the others. The org's other keys keep
+  working. A revoked key stays listed with its `revokedAt`, and revoking twice is harmless.
+
+## `POST /admin/maintenance/cleanup-events`
+
+Deletes stored example events no issue uses (left by older backends). `{ "dryRun": true }` only
+counts, and `"orgId"` limits it to one org. Returns `{ "dryRun", "total", "orgs": [{ "orgId",
+"events" }] }`. Events written in the last ten minutes are never touched.
+
+## `GET /admin/events`
+
+The admin change history, newest first, `?limit=` up to 200. Each entry is `{ "at", "action",
+"orgId", "detail" }`, where `action` is one of `org.created`, `org.renamed`,
+`org.retention_changed`, `org.disabled`, `org.enabled`, `key.created`, `key.revoked`,
+`events.cleaned_up`.
 
 ## `GET /admin/storage`
 
@@ -250,6 +295,7 @@ them.
 
 - Searching inside structured `fields` (e.g. `?field.orderId=o_1042`) — fields are stored as real
   sub-documents with Mongo-safe keys, so this is a query addition, not a schema change.
-- Rotating or revoking an API key over HTTP. Creating one is possible (`POST /admin/orgs`, below);
-  replacing one needs the in-process auth cache (`ingest/edge.ts`, which never expires an entry) to
-  expire or be invalidated first, or an old key would keep working on every warm instance.
+- Separate admin accounts. There is one shared admin token, so the change history records what
+  changed and when, but not who changed it.
+- Read-only keys. Every org key can both send and read, so a developer with a dashboard key could
+  also send data.

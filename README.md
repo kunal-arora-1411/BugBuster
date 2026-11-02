@@ -107,28 +107,44 @@ curl -o /dev/null -w '%{http_code}\n' $API/logs     # 401 (a 404 means a build o
 
 Then open `$API/docs` for the interactive API reference (Swagger UI).
 
-### Creating an organization
+### Managing organizations: the admin page
 
 Every application reports into an **organization**, and each organization's data lives in its own
 MongoDB database (`bugbuster_org_<orgId>`), chosen from its API key before any query runs. Create
 one per team or customer.
 
-**Over HTTP** (needs `BUGBUSTER_ADMIN_TOKEN` set on the backend):
+With `BUGBUSTER_ADMIN_TOKEN` set, the backend serves an admin page at **`/admin`**
+(`https://bugbuster.example.com/admin`). Sign in with the admin token; it is kept only for that
+browser tab. From there you can:
+
+- **Create organizations.** Their first API key is shown once, with a copy button.
+- **Give each service or person its own key**, and **revoke** one without affecting the others.
+  The list shows when each key was last used, so you can tell which are still needed.
+- **Disable an organization**, which refuses all of its keys for both sending and reading, with
+  `403 organization is disabled`. Its data is kept, and enabling it again restores access.
+- **Rename** an organization or change its **log retention**.
+- See what each organization **stores**, and delete leftover example events (see [Storage](#storage)).
+- Read the **activity** history of every change made through admin.
+
+Revoking a key or disabling an organization takes effect at once on the instance that handled it,
+and **within a minute on every other backend instance**, which is how long a key stays cached.
+
+**API keys are shown only once.** Only a hash is stored, so copy each new key straight away and
+hand it over through a secure channel. If one is lost, create another and revoke the old one.
+`orgId` is permanent: lowercase letters, digits, `-` and `_`, up to 40 characters.
+
+Everything the page does is also an API call, documented in `/docs`:
 
 ```bash
 curl -X POST https://bugbuster.example.com/admin/orgs \
   -H "Authorization: Bearer $BUGBUSTER_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"orgId": "acme", "name": "Acme Corp"}'
+  -d '{"orgId": "acme", "name": "Acme Corp", "keyName": "checkout-api production"}'
 ```
 
 ```json
-{ "orgId": "acme", "name": "Acme Corp", "dbName": "bugbuster_org_acme", "apiKey": "bb_…" }
+{ "orgId": "acme", "name": "Acme Corp", "dbName": "bugbuster_org_acme", "keyId": "key_…", "apiKey": "bb_…" }
 ```
-
-**The API key appears only in this response.** Only its hash is stored, so copy it now and hand it
-over through a secure channel. `orgId` is permanent: lowercase letters, digits, `-` and `_`, up to
-40 characters. A taken id returns `409`.
 
 **Or with the CLI**, from a checkout with access to the database (no admin token needed):
 
@@ -139,9 +155,9 @@ BUGBUSTER_CONTROL_DB_URI="mongodb+srv://..." \
   pnpm create-org <orgId> "<Org name>" bugbuster_org_<orgId> "$(openssl rand -hex 24)"
 ```
 
-Treat API keys like passwords. There is no rotation or revocation route yet: to replace a
-compromised key, create a new organization, or replace the org's `apiKeyHash` in the
-`bugbuster_control.orgs` collection and restart the backend (keys are cached per process).
+**Upgrading from a backend without named keys:** nothing to do. On startup, each organization's
+existing key is copied in as "Original key" and keeps working, including on instances still running
+the old version during a rolling deploy.
 
 ### Storage
 
@@ -193,7 +209,7 @@ BUGBUSTER_CONTROL_DB_URI="mongodb+srv://..." pnpm cleanup-events
 
 ### 1. Get an API key
 
-Create an organization on your backend (see [Creating an organization](#creating-an-organization))
+Create an organization on your backend (see [Managing organizations](#managing-organizations-the-admin-page))
 and take its **API key**. That key identifies your org on every request. Treat it like a password:
 keep it in an environment variable or your secret manager, never in source control.
 
