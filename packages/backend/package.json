@@ -12,6 +12,7 @@
     "start": "node dist/index.js",
     "create-org": "node dist/create-org-cli.js",
     "openapi": "node dist/openapi-cli.js",
+    "cleanup-events": "node dist/cleanup-events-cli.js",
     "test": "pnpm run test:unit",
     "test:unit": "vitest run test/unit",
     "test:integration": "vitest run test/integration"

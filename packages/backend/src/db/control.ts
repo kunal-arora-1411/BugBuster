@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { MongoClient } from "mongodb";
-import type { OrgRecord, ResolvedOrg } from "@bugbusterhq/types";
+import type { ApiKeyRecord, OrgRecord, ResolvedOrg } from "@bugbusterhq/types";
 
 /**
  * The shared control database (ingest-pipeline.md §8.4). Resolves an API key to
@@ -33,6 +33,22 @@ export async function retryWithBackoff<T>(
   throw new Error("unreachable"); // satisfies the return type; the loop always returns or throws
 }
 
+/** An org as the admin surface sees it: never its legacy key hash. */
+export type PublicOrg = Omit<OrgRecord, "apiKeyHash">;
+/** A key as the admin surface sees it: never its hash. */
+export type PublicKey = Omit<ApiKeyRecord, "keyHash">;
+
+export interface AdminEvent {
+  at: string;
+  action: string;
+  orgId?: string;
+  detail?: string;
+}
+
+const DUPLICATE_KEY = 11000;
+const newApiKey = () => `bb_${randomBytes(32).toString("base64url")}`;
+const newKeyId = () => `key_${randomBytes(6).toString("hex")}`;
+
 export class ControlDb {
   private readonly client: MongoClient;
 
@@ -42,8 +58,51 @@ export class ControlDb {
 
   async connect(): Promise<void> {
     await retryWithBackoff(() => this.client.connect());
-    await this.orgs().createIndex({ apiKeyHash: 1 }, { unique: true });
     await this.orgs().createIndex({ orgId: 1 }, { unique: true });
+    await this.keys().createIndex({ keyHash: 1 }, { unique: true });
+    await this.keys().createIndex({ orgId: 1, createdAt: 1 });
+    await this.adminEvents().createIndex({ at: -1 });
+    await this.migrateLegacyKeys();
+  }
+
+  /**
+   * Orgs created before named keys carry their one key's hash on the org record. Copy each into
+   * the keys collection as "Original key" so it keeps working and can be revoked like any other.
+   * Idempotent (the unique keyHash index makes a second copy a no-op) and safe when several
+   * instances start at once.
+   *
+   * The org's own `apiKeyHash` is deliberately left in place: during a rolling deploy, backends
+   * still running the previous code authenticate with it. It is removed when that key is revoked.
+   * Its old unique index is dropped, because orgs created from now on have no such field, and a
+   * unique index would let only one of them exist.
+   */
+  private async migrateLegacyKeys(): Promise<void> {
+    const indexes = await this.orgs().listIndexes().toArray();
+    if (indexes.some((i) => i.name === "apiKeyHash_1")) {
+      await this.orgs()
+        .dropIndex("apiKeyHash_1")
+        .catch(() => {}); // another instance dropped it first
+    }
+    const legacy = await this.orgs()
+      .find(
+        { apiKeyHash: { $exists: true } },
+        { projection: { orgId: 1, apiKeyHash: 1, createdAt: 1 } },
+      )
+      .toArray();
+    for (const org of legacy) {
+      if (!org.apiKeyHash) continue;
+      try {
+        await this.keys().insertOne({
+          keyId: newKeyId(),
+          orgId: org.orgId,
+          name: "Original key",
+          keyHash: org.apiKeyHash,
+          createdAt: org.createdAt,
+        });
+      } catch (err) {
+        if ((err as { code?: number }).code !== DUPLICATE_KEY) throw err;
+      }
+    }
   }
 
   async close(): Promise<void> {
@@ -55,13 +114,147 @@ export class ControlDb {
     return this.client;
   }
 
+  private control() {
+    return this.client.db("bugbuster_control");
+  }
   private orgs() {
-    return this.client.db("bugbuster_control").collection<OrgRecord>("orgs");
+    return this.control().collection<OrgRecord>("orgs");
+  }
+  private keys() {
+    return this.control().collection<ApiKeyRecord>("keys");
+  }
+  private adminEvents() {
+    return this.control().collection<AdminEvent>("admin_events");
   }
 
   async resolveApiKey(apiKey: string): Promise<ResolvedOrg | undefined> {
-    const org = await this.orgs().findOne({ apiKeyHash: hashApiKey(apiKey) });
-    return org ? { orgId: org.orgId, dbName: org.dbName } : undefined;
+    const key = await this.keys().findOne(
+      { keyHash: hashApiKey(apiKey), revokedAt: { $exists: false } },
+      { projection: { keyId: 1, orgId: 1 } },
+    );
+    if (!key) return undefined;
+    const org = await this.orgs().findOne({ orgId: key.orgId });
+    if (!org) return undefined;
+    return {
+      orgId: org.orgId,
+      dbName: org.dbName,
+      keyId: key.keyId,
+      ...(org.logRetentionDays !== undefined ? { logRetentionDays: org.logRetentionDays } : {}),
+      ...(org.disabled ? { disabled: true } : {}),
+    };
+  }
+
+  /** Records that a key was used. The caller throttles it; see ingest/edge.ts. */
+  async touchKey(keyId: string, at = new Date()): Promise<void> {
+    await this.keys().updateOne({ keyId }, { $set: { lastUsedAt: at.toISOString() } });
+  }
+
+  /** Every org, without its key hash. For operator tooling, never for tenant request paths. */
+  async listOrgs(): Promise<PublicOrg[]> {
+    return this.orgs()
+      .find({}, { projection: { _id: 0, apiKeyHash: 0 } })
+      .sort({ orgId: 1 })
+      .toArray();
+  }
+
+  async getOrg(orgId: string): Promise<PublicOrg | undefined> {
+    return (
+      (await this.orgs().findOne({ orgId }, { projection: { _id: 0, apiKeyHash: 0 } })) ?? undefined
+    );
+  }
+
+  /** An org's keys (or every org's), oldest first, without their hashes. */
+  async listKeys(orgId?: string): Promise<PublicKey[]> {
+    return this.keys()
+      .find(orgId ? { orgId } : {}, { projection: { _id: 0, keyHash: 0 } })
+      .sort({ orgId: 1, createdAt: 1 })
+      .toArray();
+  }
+
+  /**
+   * Changes an org's name, log retention (a number of days, or null for the backend default) or
+   * disabled state. Returns the org as stored afterwards, or undefined when there is no such org.
+   */
+  async updateOrg(
+    orgId: string,
+    change: { name?: string; logRetentionDays?: number | null; disabled?: boolean },
+  ): Promise<PublicOrg | undefined> {
+    const $set: Record<string, unknown> = {};
+    const $unset: Record<string, ""> = {};
+    if (change.name !== undefined) $set.name = change.name;
+    if (change.logRetentionDays === null) $unset.logRetentionDays = "";
+    else if (change.logRetentionDays !== undefined) $set.logRetentionDays = change.logRetentionDays;
+    if (change.disabled === true) {
+      $set.disabled = true;
+      $set.disabledAt = new Date().toISOString();
+    } else if (change.disabled === false) {
+      $unset.disabled = "";
+      $unset.disabledAt = "";
+    }
+    const update = {
+      ...(Object.keys($set).length ? { $set } : {}),
+      ...(Object.keys($unset).length ? { $unset } : {}),
+    };
+    if (Object.keys(update).length === 0) return this.getOrg(orgId);
+    const org = await this.orgs().findOneAndUpdate({ orgId }, update, {
+      returnDocument: "after",
+      projection: { _id: 0, apiKeyHash: 0 },
+    });
+    return org ?? undefined;
+  }
+
+  /** Back-compat wrapper: sets or clears (null) an org's log retention. */
+  async setLogRetention(
+    orgId: string,
+    logRetentionDays: number | null,
+  ): Promise<PublicOrg | undefined> {
+    return this.updateOrg(orgId, { logRetentionDays });
+  }
+
+  /**
+   * Creates a new key for an org and returns it in plain text: the only time it is ever
+   * available (only its hash is stored). Undefined when there is no such org.
+   */
+  async createKey(
+    orgId: string,
+    name: string,
+  ): Promise<(PublicKey & { apiKey: string }) | undefined> {
+    if (!(await this.orgs().findOne({ orgId }, { projection: { _id: 1 } }))) return undefined;
+    const apiKey = newApiKey();
+    const key: ApiKeyRecord = {
+      keyId: newKeyId(),
+      orgId,
+      name,
+      keyHash: hashApiKey(apiKey),
+      createdAt: new Date().toISOString(),
+    };
+    await this.keys().insertOne({ ...key });
+    const { keyHash: _hash, ...rest } = key;
+    return { ...rest, apiKey };
+  }
+
+  /**
+   * Revokes one key; the org's other keys keep working. Revoking is recorded rather than deleting
+   * the key, so the list still shows what it was and when it stopped. Revoking twice is a no-op.
+   * Undefined when the org has no such key.
+   */
+  async revokeKey(orgId: string, keyId: string): Promise<PublicKey | undefined> {
+    const key = await this.keys().findOne({ orgId, keyId });
+    if (!key) return undefined;
+    if (!key.revokedAt) {
+      await this.keys().updateOne(
+        { keyId, revokedAt: { $exists: false } },
+        { $set: { revokedAt: new Date().toISOString() } },
+      );
+      // A migrated original key is also still on the org record for old backends; remove it there.
+      await this.orgs().updateOne(
+        { orgId, apiKeyHash: key.keyHash },
+        { $unset: { apiKeyHash: "" } },
+      );
+    }
+    return (
+      (await this.keys().findOne({ keyId }, { projection: { _id: 0, keyHash: 0 } })) ?? undefined
+    );
   }
 
   /**
@@ -77,37 +270,90 @@ export class ControlDb {
   async createOrgWithGeneratedKey(input: {
     orgId: string;
     name: string;
+    logRetentionDays?: number;
+    keyName?: string;
   }): Promise<
-    | { created: true; orgId: string; name: string; dbName: string; apiKey: string }
+    | {
+        created: true;
+        orgId: string;
+        name: string;
+        dbName: string;
+        apiKey: string;
+        keyId: string;
+        logRetentionDays?: number;
+      }
     | { created: false }
   > {
     const dbName = `bugbuster_org_${input.orgId}`;
     if (await this.orgs().findOne({ $or: [{ orgId: input.orgId }, { dbName }] })) {
       return { created: false };
     }
-    const apiKey = `bb_${randomBytes(32).toString("base64url")}`;
+    const apiKey = newApiKey();
+    let keyId: string;
     try {
-      await this.createOrg({ orgId: input.orgId, name: input.name, dbName, apiKey });
+      keyId = await this.createOrg({
+        orgId: input.orgId,
+        name: input.name,
+        dbName,
+        apiKey,
+        keyName: input.keyName,
+        logRetentionDays: input.logRetentionDays,
+      });
     } catch (err) {
-      if ((err as { code?: number }).code === 11000) return { created: false };
+      if ((err as { code?: number }).code === DUPLICATE_KEY) return { created: false };
       throw err;
     }
-    return { created: true, orgId: input.orgId, name: input.name, dbName, apiKey };
+    return {
+      created: true,
+      orgId: input.orgId,
+      name: input.name,
+      dbName,
+      apiKey,
+      keyId,
+      ...(input.logRetentionDays !== undefined ? { logRetentionDays: input.logRetentionDays } : {}),
+    };
   }
 
-  /** Admin/test helper — not part of the ingest or query request paths. */
+  /** Creates an org and its first key from a given API key. Admin/test helper. Returns the keyId. */
   async createOrg(input: {
     orgId: string;
     name: string;
     dbName: string;
     apiKey: string;
-  }): Promise<void> {
+    keyName?: string;
+    logRetentionDays?: number;
+  }): Promise<string> {
+    const createdAt = new Date().toISOString();
     await this.orgs().insertOne({
       orgId: input.orgId,
       name: input.name,
       dbName: input.dbName,
-      apiKeyHash: hashApiKey(input.apiKey),
-      createdAt: new Date().toISOString(),
+      createdAt,
+      ...(input.logRetentionDays !== undefined ? { logRetentionDays: input.logRetentionDays } : {}),
     });
+    const keyId = newKeyId();
+    await this.keys().insertOne({
+      keyId,
+      orgId: input.orgId,
+      name: input.keyName ?? "Default key",
+      keyHash: hashApiKey(input.apiKey),
+      createdAt,
+    });
+    return keyId;
+  }
+
+  /** Appends to the admin change history. Best-effort: a failure here never fails the change. */
+  async recordAdminEvent(event: Omit<AdminEvent, "at">): Promise<void> {
+    await this.adminEvents()
+      .insertOne({ at: new Date().toISOString(), ...event })
+      .catch(() => {});
+  }
+
+  async listAdminEvents(limit: number): Promise<AdminEvent[]> {
+    return this.adminEvents()
+      .find({}, { projection: { _id: 0 } })
+      .sort({ at: -1, _id: -1 }) // _id breaks ties between changes in the same millisecond
+      .limit(limit)
+      .toArray();
   }
 }

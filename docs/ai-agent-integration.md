@@ -15,9 +15,10 @@ You need two things from whoever runs your BugBuster backend (or from your own, 
 see [Self-hosting the backend](../README.md#self-hosting-the-backend)):
 
 1. **The backend's ingest URL**, for example `https://bugbuster.yourcompany.in/ingest`.
-2. **An API key for your organization**, created with `POST /admin/orgs` or the `create-org` CLI
-   (see [Creating an organization](../README.md#creating-an-organization)). It is shown once; keep it
-   in your secret manager.
+2. **An API key for your organization**, made on the backend's admin page (`/admin`). Ideally it's
+   a key named after this service, so it can be revoked on its own (see
+   [Managing organizations](../README.md#managing-organizations-the-admin-page)). It is shown once;
+   keep it in your secret manager.
 
 **Neither value goes into the prompt or the repository.** The agent only adds placeholders to
 `.env.example`; you set the real values on your servers afterwards.

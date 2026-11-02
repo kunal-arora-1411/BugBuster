@@ -1,6 +1,6 @@
 import type { Db } from "mongodb";
 import { decodeEnvelopeItems, LogEntrySchema, type LogEntry } from "@bugbusterhq/types";
-import { addExemplarRef, upsertFoldDelta } from "../db/collections/issues.js";
+import { addExemplarRef, removeExemplarRef, upsertFoldDelta } from "../db/collections/issues.js";
 import { insertExemplar } from "../db/collections/events.js";
 import { insertLogs } from "../db/collections/logs.js";
 
@@ -12,6 +12,8 @@ import { insertLogs } from "../db/collections/logs.js";
 export interface ProcessResult {
   processedFolds: number;
   processedExemplars: number;
+  /** Exemplars not stored: the issue already holds its cap of them, or storing one failed. */
+  droppedExemplars: number;
   /** Log lines newly stored (a re-delivered duplicate of an already-stored line is not counted). */
   processedLogs: number;
   /** Log items that failed schema validation (or could not be serialized) and were discarded. */
@@ -24,6 +26,7 @@ export async function processEnvelope(db: Db, rawBody: Buffer): Promise<ProcessR
   const fingerprintsSeen = new Set<string>();
   let processedFolds = 0;
   let processedExemplars = 0;
+  let droppedExemplars = 0;
   const validLogs: LogEntry[] = [];
   let rejectedLogs = 0;
 
@@ -52,13 +55,9 @@ export async function processEnvelope(db: Db, rawBody: Buffer): Promise<ProcessR
       fingerprintsSeen.add(item.payload.fingerprint);
       processedFolds++;
     } else if (item.type === "exemplar") {
-      await insertExemplar(db, item.payload);
-      await addExemplarRef(db, item.payload.fingerprint, {
-        eventId: item.payload.eventId,
-        role: item.payload.exemplarRole,
-      });
       fingerprintsSeen.add(item.payload.fingerprint);
-      processedExemplars++;
+      if (await storeExemplar(db, item.payload)) processedExemplars++;
+      else droppedExemplars++;
     }
     // "meta" items (drop counters) are parsed but not yet persisted anywhere queryable — there is
     // no dashboard surface consuming them yet (that lands with M6). Not a named invariant this
@@ -68,8 +67,37 @@ export async function processEnvelope(db: Db, rawBody: Buffer): Promise<ProcessR
   return {
     processedFolds,
     processedExemplars,
+    droppedExemplars,
     processedLogs: stored.inserted,
     rejectedLogs,
     fingerprintsSeen: [...fingerprintsSeen],
   };
 }
+
+/**
+ * Stores one exemplar if, and only if, its issue keeps it. The reference is claimed first (one
+ * atomic, capped update) and the event written second, so an event past the issue's cap is never
+ * written: before this, every exemplar the SDK sent was stored and only six were ever referenced,
+ * leaving `events` to grow forever.
+ *
+ * Best-effort by design. This runs after the fold deltas have been applied, and a fold upsert is
+ * not idempotent: if a failure here failed the request, the sender's retry would count every fold
+ * twice. So a failure is absorbed (and the claimed reference released), never thrown.
+ */
+async function storeExemplar(db: Db, event: ExemplarPayload): Promise<boolean> {
+  let claimed = false;
+  try {
+    claimed = await addExemplarRef(db, event.fingerprint, {
+      eventId: event.eventId,
+      role: event.exemplarRole,
+    });
+    if (!claimed) return false;
+    await insertExemplar(db, event);
+    return true;
+  } catch {
+    if (claimed) await removeExemplarRef(db, event.fingerprint, event.eventId).catch(() => {});
+    return false;
+  }
+}
+
+type ExemplarPayload = Parameters<typeof insertExemplar>[1];

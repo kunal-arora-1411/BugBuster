@@ -72,6 +72,7 @@ function logsCollection(db: Db): Collection<LogDocument> {
  * "ECONNRESET 10.0.3" wants.
  */
 export async function ensureLogsIndexes(db: Db, opts: { retentionDays: number }): Promise<void> {
+  await createLogsCollectionCompressed(db);
   const logs = logsCollection(db);
   await Promise.all([
     logs.createIndex({ logId: 1 }, { unique: true }),
@@ -86,7 +87,30 @@ export async function ensureLogsIndexes(db: Db, opts: { retentionDays: number })
   await ensureRetentionIndex(db, opts.retentionDays);
 }
 
-async function ensureRetentionIndex(db: Db, retentionDays: number): Promise<void> {
+/**
+ * Creates `logs` with zstd block compression when it does not exist yet. Log text is repetitive
+ * (the same paths, keys and messages over and over), and zstd stores it in several times less
+ * disk than WiredTiger's default snappy. A collection's compressor is fixed when it is created, so
+ * this only affects new collections; an existing one keeps its compressor (the storage report
+ * shows which each org has) until it is rebuilt.
+ *
+ * Best-effort: if the server refuses the option (some hosted tiers restrict storage settings), the
+ * collection is left to be created by the first createIndex with the server's default.
+ */
+async function createLogsCollectionCompressed(db: Db): Promise<void> {
+  const exists =
+    (await db.listCollections({ name: "logs" }, { nameOnly: true }).toArray()).length > 0;
+  if (exists) return;
+  try {
+    await db.createCollection("logs", {
+      storageEngine: { wiredTiger: { configString: "block_compressor=zstd" } },
+    });
+  } catch {
+    // NamespaceExists (another process won the race) or an unsupported option: both are fine.
+  }
+}
+
+export async function ensureRetentionIndex(db: Db, retentionDays: number): Promise<void> {
   const logs = logsCollection(db);
   const existing = (await logs.listIndexes().toArray()).find((i) => i.name === TTL_INDEX_NAME);
 
