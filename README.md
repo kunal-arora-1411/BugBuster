@@ -147,6 +147,10 @@ compromised key, create a new organization, or replace the org's `apiKeyHash` in
 
 ## Using BugBuster in your app
 
+> **Using an AI coding agent?** [`docs/ai-agent-integration.md`](docs/ai-agent-integration.md) has a
+> ready-made prompt to paste into Claude Code, Cursor, Codex or Copilot in your service's
+> repository. It does the steps below for you, on its own branch, without disturbing other open work.
+
 ### 1. Get an API key
 
 Create an organization on your backend (see [Creating an organization](#creating-an-organization))
