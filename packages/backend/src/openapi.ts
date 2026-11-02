@@ -44,6 +44,10 @@ const errorResponse = (description: string, example: string) => ({
 });
 
 const unauthorized = errorResponse("Missing or unknown API key.", "invalid api key");
+const orgDisabled = errorResponse(
+  "The organization has been disabled by an operator. Nothing to retry; ask them to enable it.",
+  "organization is disabled",
+);
 
 const cursorParam = {
   name: "cursor",
@@ -54,6 +58,13 @@ const cursorParam = {
     "construct or parse it client-side.",
   schema: { type: "string" },
 };
+
+const adminUnauthorized = errorResponse("Missing or wrong admin token.", "invalid admin token");
+const adminDisabled = errorResponse(
+  "Admin routes are disabled (no admin token configured).",
+  "not found",
+);
+const orgIdParam = { name: "orgId", in: "path", required: true, schema: { type: "string" } };
 
 const retentionDaysSchema = {
   type: "integer",
@@ -142,6 +153,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
             ),
             "400": errorResponse("The cursor is not valid.", "invalid cursor"),
             "401": unauthorized,
+            "403": orgDisabled,
           },
         },
       },
@@ -154,6 +166,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           responses: {
             "200": json(ref("Issue"), "The issue."),
             "401": unauthorized,
+            "403": orgDisabled,
             "404": errorResponse(
               "No such fingerprint in your organization (also returned when it exists only in " +
                 "another organization).",
@@ -181,6 +194,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
               "The example events.",
             ),
             "401": unauthorized,
+            "403": orgDisabled,
             "404": errorResponse("No such fingerprint in your organization.", "not found"),
           },
         },
@@ -272,6 +286,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
               "invalid level: fatal",
             ),
             "401": unauthorized,
+            "403": orgDisabled,
           },
         },
       },
@@ -296,6 +311,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
               "Sorted distinct values.",
             ),
             "401": unauthorized,
+            "403": orgDisabled,
           },
         },
       },
@@ -357,6 +373,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
               },
             },
             "401": unauthorized,
+            "403": orgDisabled,
             "413": {
               description: "The body is larger than the backend's limit (2 MB by default).",
             },
@@ -364,16 +381,37 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         },
       },
       "/admin/orgs": {
+        get: {
+          tags: ["Admin"],
+          operationId: "listOrgs",
+          summary: "List organizations with their status and keys",
+          description:
+            "Every organization with its status, the log retention in effect, and its keys (names, " +
+            "dates and last use; never the keys themselves or their hashes).",
+          security: [{ adminToken: [] }],
+          responses: {
+            "200": json(
+              {
+                type: "object",
+                required: ["orgs"],
+                properties: { orgs: { type: "array", items: ref("AdminOrg") } },
+              },
+              "The organizations, sorted by id.",
+            ),
+            "401": adminUnauthorized,
+            "404": adminDisabled,
+          },
+        },
         post: {
           tags: ["Admin"],
           operationId: "createOrg",
-          summary: "Create an organization and its API key",
+          summary: "Create an organization and its first API key",
           description:
             "Creates the organization (its data goes to its own database, " +
-            "`bugbuster_org_<orgId>`) and returns its new API key. **The key is shown only in " +
-            "this response**: only a hash is stored, so it can't be retrieved later.\n\n" +
+            "`bugbuster_org_<orgId>`) and its first named key, and returns that key. **The key is " +
+            "shown only in this response**: only a hash is stored, so it can't be retrieved later.\n\n" +
             "Needs the backend's `BUGBUSTER_ADMIN_TOKEN` as the bearer token. When the backend " +
-            "has no admin token configured, this route answers `404`.",
+            "has no admin token configured, the admin routes answer `404`.",
           security: [{ adminToken: [] }],
           requestBody: {
             required: true,
@@ -390,9 +428,15 @@ export function buildOpenApiDocument(): Record<string, unknown> {
                     },
                     name: { type: "string", minLength: 1, maxLength: 200 },
                     logRetentionDays: retentionDaysSchema,
+                    keyName: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 100,
+                      description: 'Name of the first key. Default "Default key".',
+                    },
                   },
                 },
-                example: { orgId: "acme", name: "Acme Corp" },
+                example: { orgId: "acme", name: "Acme Corp", keyName: "checkout-api production" },
               },
             },
           },
@@ -400,11 +444,12 @@ export function buildOpenApiDocument(): Record<string, unknown> {
             "201": json(
               {
                 type: "object",
-                required: ["orgId", "name", "dbName", "apiKey"],
+                required: ["orgId", "name", "dbName", "apiKey", "keyId"],
                 properties: {
                   orgId: { type: "string" },
                   name: { type: "string" },
                   dbName: { type: "string" },
+                  keyId: { type: "string" },
                   apiKey: {
                     type: "string",
                     description: "Give this to the organization. It is not shown again.",
@@ -418,14 +463,11 @@ export function buildOpenApiDocument(): Record<string, unknown> {
               "Created.",
             ),
             "400": errorResponse(
-              "`orgId`, `name` or `logRetentionDays` is invalid.",
+              "`orgId`, `name`, `logRetentionDays` or `keyName` is invalid.",
               "name must be 1-200 characters",
             ),
-            "401": errorResponse("Missing or wrong admin token.", "invalid admin token"),
-            "404": errorResponse(
-              "Admin routes are disabled (no admin token configured).",
-              "not found",
-            ),
+            "401": adminUnauthorized,
+            "404": adminDisabled,
             "409": errorResponse(
               "The orgId, or its database name, is already taken.",
               "an org with this id or database already exists",
@@ -437,22 +479,29 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         patch: {
           tags: ["Admin"],
           operationId: "updateOrg",
-          summary: "Change an organization's log retention",
+          summary: "Rename, change retention, or disable an organization",
           description:
-            "Sets how many days this organization's log lines are kept (`0` keeps them forever), " +
-            "or `null` to use the backend's `BUGBUSTER_LOG_RETENTION_DAYS` again. Applied to the " +
-            "organization's retention index immediately, for every backend process.",
+            "Send any of these:\n\n" +
+            "- `name`: the display name.\n" +
+            "- `logRetentionDays`: days to keep log lines (`0` keeps them forever), or `null` to use " +
+            "the backend's `BUGBUSTER_LOG_RETENTION_DAYS`. Applied to the organization's retention " +
+            "index immediately, for every backend process.\n" +
+            "- `disabled`: `true` refuses every request with the organization's keys (`403 " +
+            "organization is disabled`) until it is set back to `false`. Data is kept. Takes effect " +
+            "within a minute on every backend instance.",
           security: [{ adminToken: [] }],
-          parameters: [{ name: "orgId", in: "path", required: true, schema: { type: "string" } }],
+          parameters: [orgIdParam],
           requestBody: {
             required: true,
             content: {
               "application/json": {
                 schema: {
                   type: "object",
-                  required: ["logRetentionDays"],
+                  minProperties: 1,
                   properties: {
+                    name: { type: "string", minLength: 1, maxLength: 200 },
                     logRetentionDays: { ...retentionDaysSchema, type: ["integer", "null"] },
+                    disabled: { type: "boolean" },
                   },
                 },
                 example: { logRetentionDays: 30 },
@@ -460,16 +509,202 @@ export function buildOpenApiDocument(): Record<string, unknown> {
             },
           },
           responses: {
-            "200": json(ref("OrgSettings"), "The organization's settings now."),
+            "200": json(ref("AdminOrg"), "The organization now."),
             "400": errorResponse(
-              "`logRetentionDays` is missing or invalid.",
+              "Nothing to change, or a value is invalid.",
               "logRetentionDays must be a whole number from 0 (keep forever) to 3650",
             ),
-            "401": errorResponse("Missing or wrong admin token.", "invalid admin token"),
+            "401": adminUnauthorized,
             "404": errorResponse(
               "No such organization, or admin routes are disabled.",
               "no such org",
             ),
+          },
+        },
+      },
+      "/admin/orgs/{orgId}/keys": {
+        post: {
+          tags: ["Admin"],
+          operationId: "createKey",
+          summary: "Create another API key for an organization",
+          description:
+            "Give each service or person its own key, so one can be revoked without affecting the " +
+            "others. **The key is shown only in this response.**",
+          security: [{ adminToken: [] }],
+          parameters: [orgIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["name"],
+                  properties: { name: { type: "string", minLength: 1, maxLength: 100 } },
+                },
+                example: { name: "orders-worker production" },
+              },
+            },
+          },
+          responses: {
+            "201": json(
+              {
+                allOf: [
+                  ref("ApiKeyInfo"),
+                  {
+                    type: "object",
+                    required: ["apiKey"],
+                    properties: { apiKey: { type: "string", description: "Not shown again." } },
+                  },
+                ],
+              },
+              "Created.",
+            ),
+            "400": errorResponse("`name` is missing or invalid.", "name must be 1-100 characters"),
+            "401": adminUnauthorized,
+            "404": errorResponse(
+              "No such organization, or admin routes are disabled.",
+              "no such org",
+            ),
+          },
+        },
+      },
+      "/admin/orgs/{orgId}/keys/{keyId}": {
+        delete: {
+          tags: ["Admin"],
+          operationId: "revokeKey",
+          summary: "Revoke one API key",
+          description:
+            "Requests with this key get `401 invalid api key` from now on, within a minute on every " +
+            "backend instance. The organization's other keys keep working. The key stays listed, " +
+            "marked revoked. Revoking twice is harmless.",
+          security: [{ adminToken: [] }],
+          parameters: [
+            orgIdParam,
+            { name: "keyId", in: "path", required: true, schema: { type: "string" } },
+          ],
+          responses: {
+            "200": json(ref("ApiKeyInfo"), "The key, now revoked."),
+            "401": adminUnauthorized,
+            "404": errorResponse("No such key in this organization.", "no such key"),
+          },
+        },
+      },
+      "/admin/maintenance/cleanup-events": {
+        post: {
+          tags: ["Admin"],
+          operationId: "cleanupEvents",
+          summary: "Delete example events no issue uses",
+          description:
+            "Backends before the exemplar fix stored example events past each issue's six; they " +
+            "take space and are never shown. This deletes them (events written in the last ten " +
+            "minutes are left alone). `dryRun: true` only counts.",
+          security: [{ adminToken: [] }],
+          requestBody: {
+            required: false,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    dryRun: { type: "boolean", default: false },
+                    orgId: { type: "string", description: "One organization only." },
+                  },
+                },
+                example: { dryRun: true },
+              },
+            },
+          },
+          responses: {
+            "200": json(
+              {
+                type: "object",
+                required: ["dryRun", "total", "orgs"],
+                properties: {
+                  dryRun: { type: "boolean" },
+                  total: { type: "integer" },
+                  orgs: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: { orgId: { type: "string" }, events: { type: "integer" } },
+                    },
+                  },
+                },
+              },
+              "Counted, or deleted.",
+            ),
+            "401": adminUnauthorized,
+            "404": errorResponse(
+              "No such organization, or admin routes are disabled.",
+              "no such org",
+            ),
+          },
+        },
+      },
+      "/admin/events": {
+        get: {
+          tags: ["Admin"],
+          operationId: "listAdminEvents",
+          summary: "The admin change history",
+          description: "Changes made through the admin routes, newest first.",
+          security: [{ adminToken: [] }],
+          parameters: [
+            {
+              name: "limit",
+              in: "query",
+              required: false,
+              schema: { type: "integer", minimum: 1, maximum: 200, default: 50 },
+            },
+          ],
+          responses: {
+            "200": json(
+              {
+                type: "object",
+                required: ["events"],
+                properties: {
+                  events: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      required: ["at", "action"],
+                      properties: {
+                        at: { type: "string", format: "date-time" },
+                        action: {
+                          type: "string",
+                          example: "key.revoked",
+                          description:
+                            "org.created, org.renamed, org.retention_changed, org.disabled, " +
+                            "org.enabled, key.created, key.revoked or events.cleaned_up.",
+                        },
+                        orgId: { type: "string" },
+                        detail: { type: "string" },
+                      },
+                    },
+                  },
+                },
+              },
+              "The history.",
+            ),
+            "401": adminUnauthorized,
+            "404": adminDisabled,
+          },
+        },
+      },
+      "/admin": {
+        get: {
+          tags: ["Admin"],
+          operationId: "getAdminPage",
+          summary: "The admin page",
+          description:
+            "A web page to manage organizations, keys and storage, signed in with the admin " +
+            "token. Answers `404` when no admin token is configured.",
+          security: [],
+          responses: {
+            "200": {
+              description: "An HTML page.",
+              content: { "text/html": { schema: { type: "string" } } },
+            },
+            "404": adminDisabled,
           },
         },
       },
@@ -579,18 +814,47 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           ...schemaOf(EnvelopeItemSchema),
         },
         SampleDirective: schemaOf(SampleDirectiveSchema),
-        OrgSettings: {
+        ApiKeyInfo: {
           type: "object",
-          required: ["orgId", "name", "dbName", "logRetentionDays", "retentionOverridden"],
+          required: ["keyId", "orgId", "name", "createdAt"],
+          properties: {
+            keyId: { type: "string" },
+            orgId: { type: "string" },
+            name: { type: "string" },
+            createdAt: { type: "string", format: "date-time" },
+            lastUsedAt: {
+              type: "string",
+              format: "date-time",
+              description: "Updated at most about once an hour.",
+            },
+            revokedAt: { type: "string", format: "date-time" },
+          },
+        },
+        AdminOrg: {
+          type: "object",
+          required: [
+            "orgId",
+            "name",
+            "dbName",
+            "createdAt",
+            "disabled",
+            "logRetentionDays",
+            "retentionOverridden",
+            "keys",
+          ],
           properties: {
             orgId: { type: "string" },
             name: { type: "string" },
             dbName: { type: "string" },
+            createdAt: { type: "string", format: "date-time" },
+            disabled: { type: "boolean" },
+            disabledAt: { type: "string", format: "date-time" },
             logRetentionDays: { type: "integer", description: "The retention in effect." },
             retentionOverridden: {
               type: "boolean",
               description: "False when the backend's default applies.",
             },
+            keys: { type: "array", items: ref("ApiKeyInfo") },
           },
         },
         StorageReport: {

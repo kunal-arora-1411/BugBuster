@@ -10,15 +10,17 @@ import {
   LogLevelSchema,
   type LogLevel,
 } from "@bugbusterhq/types";
-import type { ControlDb } from "./db/control.js";
+import type { ControlDb, PublicKey, PublicOrg } from "./db/control.js";
 import { TenantDbResolver } from "./db/tenant.js";
-import { extractBearerToken, resolveOrgForRequest, updateCachedOrg } from "./ingest/edge.js";
+import { extractBearerToken, forgetOrg, noteKeyUse, resolveOrgForRequest } from "./ingest/edge.js";
 import { processEnvelope } from "./ingest/processor.js";
 import { decodeIssuesCursor, getIssue, listIssues } from "./db/collections/issues.js";
 import { getExemplarsByIds } from "./db/collections/events.js";
 import { decodeLogsCursor, getLogFacets, queryLogs, type LogQuery } from "./db/collections/logs.js";
 import { attachFidelity } from "./query/fidelity.js";
 import { orgStorageReport } from "./db/storage-report.js";
+import { countUnreferencedEvents, deleteUnreferencedEvents } from "./db/maintenance.js";
+import { ADMIN_PAGE_HTML } from "./admin-page.js";
 import { computeDirectives } from "./directives.js";
 import { buildOpenApiDocument, SWAGGER_UI_HTML } from "./openapi.js";
 
@@ -31,7 +33,15 @@ const FACETS_CACHE_MS = 60_000;
 /** An org id becomes part of a MongoDB database name, so it is kept to a safe, short alphabet. */
 const ORG_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 const MAX_ORG_NAME_CHARS = 200;
+const MAX_KEY_NAME_CHARS = 100;
 const MAX_RETENTION_DAYS = 3650;
+
+/** A trimmed name of 1..max characters, or undefined when it is not one. */
+function parseName(value: unknown, max: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const name = value.trim();
+  return name.length > 0 && name.length <= max ? name : undefined;
+}
 const RETENTION_ERROR = `logRetentionDays must be a whole number from 0 (keep forever) to ${MAX_RETENTION_DAYS}`;
 
 /** undefined when absent, null when explicitly cleared (if allowed), "invalid" otherwise wrong. */
@@ -135,6 +145,14 @@ async function requireOrg(
     await reply.code(401).send({ error: "invalid api key" });
     return undefined;
   }
+  // 403, not 401: the key is real but its org has been switched off by an operator. 4xx also tells
+  // the SDK and the Agent not to retry, so a disabled org's services stop sending instead of
+  // hammering the backend.
+  if (org.disabled) {
+    await reply.code(403).send({ error: "organization is disabled" });
+    return undefined;
+  }
+  noteKeyUse(org, controlDb);
   return org;
 }
 
@@ -177,7 +195,7 @@ export function registerRoutes(
   // onSend hook above never gets a chance to help: it decorates a response, but there's no
   // matched route to send one from.
   app.options("/*", async (_request, reply) => {
-    reply.header("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
+    reply.header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
     await reply.code(204).send();
   });
 
@@ -213,7 +231,32 @@ export function registerRoutes(
     return true;
   }
 
-  // Creates an organization and returns its API key (once — only the hash is stored).
+  /** An org as the admin API returns it: settings in effect, status, and its keys (no hashes). */
+  function orgView(org: PublicOrg, keys: PublicKey[]) {
+    const override =
+      org.logRetentionDays !== undefined ? { logRetentionDays: org.logRetentionDays } : {};
+    return {
+      orgId: org.orgId,
+      name: org.name,
+      dbName: org.dbName,
+      createdAt: org.createdAt,
+      disabled: org.disabled === true,
+      ...(org.disabledAt ? { disabledAt: org.disabledAt } : {}),
+      logRetentionDays: tenants.retentionFor(override),
+      retentionOverridden: org.logRetentionDays !== undefined,
+      keys: keys.filter((k) => k.orgId === org.orgId),
+    };
+  }
+
+  // Every org with its status, retention and keys. Key hashes never leave the control database.
+  app.get("/admin/orgs", async (request, reply) => {
+    if (!(await requireAdmin(request, reply))) return;
+    const [orgs, keys] = await Promise.all([controlDb.listOrgs(), controlDb.listKeys()]);
+    await reply.send({ orgs: orgs.map((o) => orgView(o, keys)) });
+  });
+
+  // Creates an organization and its first key, and returns that key (once — only the hash is
+  // stored).
   app.post<{ Body: unknown }>("/admin/orgs", async (request, reply) => {
     if (!(await requireAdmin(request, reply))) return;
 
@@ -221,6 +264,7 @@ export function registerRoutes(
       orgId?: unknown;
       name?: unknown;
       logRetentionDays?: unknown;
+      keyName?: unknown;
     };
     if (typeof body.orgId !== "string" || !ORG_ID_PATTERN.test(body.orgId)) {
       await reply.code(400).send({
@@ -228,8 +272,8 @@ export function registerRoutes(
       });
       return;
     }
-    const name = typeof body.name === "string" ? body.name.trim() : "";
-    if (name.length === 0 || name.length > MAX_ORG_NAME_CHARS) {
+    const name = parseName(body.name, MAX_ORG_NAME_CHARS);
+    if (name === undefined) {
       await reply.code(400).send({ error: `name must be 1-${MAX_ORG_NAME_CHARS} characters` });
       return;
     }
@@ -238,55 +282,220 @@ export function registerRoutes(
       await reply.code(400).send({ error: RETENTION_ERROR });
       return;
     }
+    const keyName =
+      body.keyName === undefined ? undefined : parseName(body.keyName, MAX_KEY_NAME_CHARS);
+    if (body.keyName !== undefined && keyName === undefined) {
+      await reply.code(400).send({ error: `keyName must be 1-${MAX_KEY_NAME_CHARS} characters` });
+      return;
+    }
 
     const result = await controlDb.createOrgWithGeneratedKey({
       orgId: body.orgId,
       name,
       ...(typeof retention === "number" ? { logRetentionDays: retention } : {}),
+      ...(keyName ? { keyName } : {}),
     });
     if (!result.created) {
       await reply.code(409).send({ error: "an org with this id or database already exists" });
       return;
     }
+    await controlDb.recordAdminEvent({ action: "org.created", orgId: result.orgId, detail: name });
     const { created: _created, ...org } = result;
     // The key is in this response and nowhere else; nothing in between may keep a copy.
     reply.header("Cache-Control", "no-store");
     await reply.code(201).send(org);
   });
 
-  // Changes an org's settings. Today that is its log retention: a number of days (0 = keep
-  // forever) or null to go back to the backend's default. Applied to the org's TTL index at once,
-  // so it holds for every backend process, not only this one.
+  // Changes an org: its name, its log retention (days, 0 = keep forever, null = the backend
+  // default; applied to the org's TTL index at once, for every backend process), and whether it is
+  // disabled (its keys are refused with 403; its data is kept).
   app.patch<{ Params: { orgId: string }; Body: unknown }>(
     "/admin/orgs/:orgId",
     async (request, reply) => {
       if (!(await requireAdmin(request, reply))) return;
-      const body = (request.body ?? {}) as { logRetentionDays?: unknown };
-      const retention = parseRetentionDays(body.logRetentionDays, { allowNull: true });
-      if (retention === "invalid" || retention === undefined) {
+      const body = (request.body ?? {}) as {
+        name?: unknown;
+        logRetentionDays?: unknown;
+        disabled?: unknown;
+      };
+      const change: { name?: string; logRetentionDays?: number | null; disabled?: boolean } = {};
+      if (body.name !== undefined) {
+        const name = parseName(body.name, MAX_ORG_NAME_CHARS);
+        if (name === undefined) {
+          await reply.code(400).send({ error: `name must be 1-${MAX_ORG_NAME_CHARS} characters` });
+          return;
+        }
+        change.name = name;
+      }
+      if (body.logRetentionDays !== undefined) {
+        const retention = parseRetentionDays(body.logRetentionDays, { allowNull: true });
+        if (retention === "invalid" || retention === undefined) {
+          await reply
+            .code(400)
+            .send({ error: RETENTION_ERROR + ", or null for the backend default" });
+          return;
+        }
+        change.logRetentionDays = retention;
+      }
+      if (body.disabled !== undefined) {
+        if (typeof body.disabled !== "boolean") {
+          await reply.code(400).send({ error: "disabled must be true or false" });
+          return;
+        }
+        change.disabled = body.disabled;
+      }
+      if (Object.keys(change).length === 0) {
         await reply
           .code(400)
-          .send({ error: RETENTION_ERROR + ", or null for the backend default" });
+          .send({ error: "send at least one of name, logRetentionDays, disabled" });
         return;
       }
-      const org = await controlDb.setLogRetention(request.params.orgId, retention);
+
+      const org = await controlDb.updateOrg(request.params.orgId, change);
       if (!org) {
         await reply.code(404).send({ error: "no such org" });
         return;
       }
-      const override =
-        org.logRetentionDays !== undefined ? { logRetentionDays: org.logRetentionDays } : {};
-      await tenants.applyLogRetention(org.dbName, override);
-      updateCachedOrg(org.orgId, override);
-      await reply.send({
-        orgId: org.orgId,
-        name: org.name,
-        dbName: org.dbName,
-        logRetentionDays: tenants.retentionFor(override),
-        retentionOverridden: org.logRetentionDays !== undefined,
-      });
+      if (change.logRetentionDays !== undefined) {
+        const override =
+          org.logRetentionDays !== undefined ? { logRetentionDays: org.logRetentionDays } : {};
+        await tenants.applyLogRetention(org.dbName, override);
+      }
+      forgetOrg(org.orgId);
+      const orgId = org.orgId;
+      if (change.name !== undefined) {
+        await controlDb.recordAdminEvent({ action: "org.renamed", orgId, detail: change.name });
+      }
+      if (change.logRetentionDays !== undefined) {
+        await controlDb.recordAdminEvent({
+          action: "org.retention_changed",
+          orgId,
+          detail:
+            change.logRetentionDays === null
+              ? "backend default"
+              : `${change.logRetentionDays} days`,
+        });
+      }
+      if (change.disabled !== undefined) {
+        await controlDb.recordAdminEvent({
+          action: change.disabled ? "org.disabled" : "org.enabled",
+          orgId,
+        });
+      }
+      await reply.send(orgView(org, await controlDb.listKeys(orgId)));
     },
   );
+
+  // A new key for an org, returned once. One key per service or person, so each can be revoked
+  // without touching the others.
+  app.post<{ Params: { orgId: string }; Body: unknown }>(
+    "/admin/orgs/:orgId/keys",
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply))) return;
+      const name = parseName(
+        (request.body as { name?: unknown } | undefined)?.name,
+        MAX_KEY_NAME_CHARS,
+      );
+      if (name === undefined) {
+        await reply.code(400).send({ error: `name must be 1-${MAX_KEY_NAME_CHARS} characters` });
+        return;
+      }
+      const key = await controlDb.createKey(request.params.orgId, name);
+      if (!key) {
+        await reply.code(404).send({ error: "no such org" });
+        return;
+      }
+      await controlDb.recordAdminEvent({ action: "key.created", orgId: key.orgId, detail: name });
+      reply.header("Cache-Control", "no-store");
+      await reply.code(201).send(key);
+    },
+  );
+
+  // Revokes one key: requests with it are refused from now on (on other backend instances within a
+  // minute; see AUTH_CACHE_TTL_MS). The org's other keys keep working. Revoking twice is harmless.
+  app.delete<{ Params: { orgId: string; keyId: string } }>(
+    "/admin/orgs/:orgId/keys/:keyId",
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply))) return;
+      const before = (await controlDb.listKeys(request.params.orgId)).find(
+        (k) => k.keyId === request.params.keyId,
+      );
+      const key = await controlDb.revokeKey(request.params.orgId, request.params.keyId);
+      if (!key) {
+        await reply.code(404).send({ error: "no such key" });
+        return;
+      }
+      forgetOrg(key.orgId);
+      if (before && !before.revokedAt) {
+        await controlDb.recordAdminEvent({
+          action: "key.revoked",
+          orgId: key.orgId,
+          detail: key.name,
+        });
+      }
+      await reply.send(key);
+    },
+  );
+
+  // Deletes stored exemplars no issue references (left by backends before the exemplar fix), in
+  // one org or all. `dryRun: true` only counts. Events younger than ten minutes are never touched.
+  app.post<{ Body: unknown }>("/admin/maintenance/cleanup-events", async (request, reply) => {
+    if (!(await requireAdmin(request, reply))) return;
+    const body = (request.body ?? {}) as { dryRun?: unknown; orgId?: unknown };
+    const dryRun = body.dryRun === true;
+    const orgs = (await controlDb.listOrgs()).filter(
+      (o) => body.orgId === undefined || o.orgId === body.orgId,
+    );
+    if (body.orgId !== undefined && orgs.length === 0) {
+      await reply.code(404).send({ error: "no such org" });
+      return;
+    }
+    const client = controlDb.getClient();
+    const results = [];
+    for (const org of orgs) {
+      const db = client.db(org.dbName);
+      const events = dryRun
+        ? await countUnreferencedEvents(db)
+        : await deleteUnreferencedEvents(db);
+      results.push({ orgId: org.orgId, events });
+    }
+    const total = results.reduce((sum, r) => sum + r.events, 0);
+    if (!dryRun && total > 0) {
+      await controlDb.recordAdminEvent({
+        action: "events.cleaned_up",
+        detail: `${total} unreferenced events deleted`,
+      });
+    }
+    await reply.send({ dryRun, total, orgs: results });
+  });
+
+  // The admin change history, newest first: what changed, in which org, and when.
+  app.get<{ Querystring: { limit?: string } }>("/admin/events", async (request, reply) => {
+    if (!(await requireAdmin(request, reply))) return;
+    const limit = Math.min(Math.max(Number(request.query.limit) || 50, 1), 200);
+    await reply.send({ events: await controlDb.listAdminEvents(limit) });
+  });
+
+  // The admin page. It holds no data (everything it shows comes from the routes above, with the
+  // token the operator types in), but it is only served where admin routes are enabled. A strict
+  // content policy: its own inline script and style, fonts from Google, requests to this backend
+  // only, and never inside a frame.
+  app.get("/admin", async (_request, reply) => {
+    if (!options.adminToken) {
+      await reply.code(404).send({ error: "not found" });
+      return;
+    }
+    reply.header(
+      "Content-Security-Policy",
+      "default-src 'none'; script-src 'unsafe-inline'; " +
+        "style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; " +
+        "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; " +
+        "frame-ancestors 'none'",
+    );
+    reply.header("Referrer-Policy", "no-referrer");
+    reply.header("Cache-Control", "no-store");
+    await reply.type("text/html; charset=utf-8").send(ADMIN_PAGE_HTML);
+  });
 
   // What each org's data costs in MongoDB: per-collection size on disk and in indexes, the
   // compressor in use, log lines per day, and exemplars waiting for cleanup. `?orgId=` for one org.
@@ -319,6 +528,25 @@ export function registerRoutes(
   // Agent's HttpClient always zstd-compresses (its job, not the SDK's); a direct-mode SDK talking
   // straight to this endpoint (the browser/serverless fallback) sends uncompressed bytes, so this
   // only acts when the header says compression was actually used.
+  // JSON bodies, with one difference from Fastify's default: an empty body is "no body", not a
+  // 400. Clients routinely send Content-Type: application/json on every request, DELETE included,
+  // and refusing those with FST_ERR_CTP_EMPTY_JSON_BODY is a confusing failure for no benefit.
+  app.removeContentTypeParser("application/json");
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => {
+    const text = (body as string).trim();
+    if (text === "") {
+      done(null, undefined);
+      return;
+    }
+    try {
+      done(null, JSON.parse(text));
+    } catch {
+      const err = new Error("request body is not valid JSON") as Error & { statusCode: number };
+      err.statusCode = 400;
+      done(err, undefined);
+    }
+  });
+
   app.addContentTypeParser("application/x-ndjson", { parseAs: "buffer" }, (req, body, done) => {
     const buf = body as Buffer;
     if (req.headers["content-encoding"] === "zstd") {
