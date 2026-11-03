@@ -19,6 +19,14 @@ import { SuppressionState, applyDirectives } from "./directives.js";
 export type { CaptureEngine } from "./capture.js";
 export { RingBuffer } from "./ring-buffer.js";
 export { runWithContext, getCurrentContext, type BugBusterContext } from "./context.js";
+export {
+  instrumentFetch,
+  newSpanId,
+  newTraceId,
+  traceFromHeaders,
+  traceHeaders,
+  type InstrumentFetchOptions,
+} from "./trace-propagation.js";
 export { FoldTable } from "./worker/fold.js";
 export { computeFingerprint, computeCoarsenedFingerprint } from "./worker/fingerprint.js";
 export { HttpTransport } from "./transport/http-transport.js";

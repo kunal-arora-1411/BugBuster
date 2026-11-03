@@ -323,6 +323,28 @@ app.use((err, req, res, next) => {
 `HandledHttpError`), without double-counting requests where you already called
 `captureException`. Query strings are never logged.
 
+#### One request across several services
+
+When service A calls service B while handling a request, B can join A's trace. Then
+*What this request logged* (on an issue) and the Logs view's trace filter show the lines from both
+services, in order, each labeled with its service. Two pieces, both in the SDK (0.3.0+):
+
+- **Receiving:** `bb.requestHandler` continues the caller's trace when the request carries a W3C
+  `traceparent` header (or an `X-Request-Id`). Nothing to set up.
+- **Calling:** pass the trace on. For `fetch`, once at startup:
+
+  ```ts
+  bb.instrumentFetch();                                         // every fetch during a request
+  bb.instrumentFetch({ propagateTo: ["http://auth-service"] }); // or only to your own services
+  ```
+
+  For axios, got or `http`, add the headers yourself:
+  `axios.get(url, { headers: bb.traceHeaders() })`, or once with an interceptor:
+  `axios.interceptors.request.use((c) => { Object.assign(c.headers, bb.traceHeaders()); return c; })`.
+
+`traceparent` is the standard OpenTelemetry uses, so traces also continue through services
+instrumented with it. Use `propagateTo` to keep trace ids from being sent to outside APIs.
+
 ### 6. Application logs
 
 ```ts

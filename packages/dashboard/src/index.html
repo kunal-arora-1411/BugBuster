@@ -257,6 +257,8 @@
   .trail-row:first-child { border-top: none; }
   .trail-row .t { font-family: var(--mono); font-size: 12px; color: var(--muted); }
   .trail-row .m { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+  .trail.multi .trail-row { grid-template-columns: 64px 44px minmax(0, 120px) minmax(0, 1fr); }
+  .trail-row .s { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .trail-foot { margin-top: 10px; }
 
   /* ---- logs ---- */
@@ -1155,12 +1157,19 @@
       }
       // The end of the request is where it failed, so a long trail shows its last lines here; the
       // report and the Logs view have all of them.
-      h.appendChild(el("span", "muted", lines.length > SHOWN
+      // A request that went through several services shows which one wrote each line.
+      const services = new Set(lines.map((l) => (l.service ? l.service.name : "")));
+      const multi = services.size > 1;
+      list.classList.toggle("multi", multi);
+      h.appendChild(el("span", "muted", (lines.length > SHOWN
         ? "last " + SHOWN + " of " + plural(lines.length, "line") + (trail.more ? "+" : "")
-        : plural(lines.length, "line") + (trail.more ? ", more in Logs" : "")));
+        : plural(lines.length, "line") + (trail.more ? ", more in Logs" : "")) +
+        (multi ? ", across " + plural(services.size, "service") : "")));
       for (const l of lines.slice(-SHOWN)) {
         const r = el("div", "trail-row lvl-" + l.level);
-        r.append(el("span", "t", tf.format(new Date(l.timestamp))), el("span", "log-level", l.level), el("span", "m", l.message));
+        r.append(el("span", "t", tf.format(new Date(l.timestamp))), el("span", "log-level", l.level));
+        if (multi) { const s = el("span", "s", l.service ? l.service.name : ""); s.title = s.textContent; r.appendChild(s); }
+        r.appendChild(el("span", "m", l.message));
         list.appendChild(r);
       }
       const foot = el("div", "trail-foot");
