@@ -117,6 +117,12 @@ bb.captureException(err);
 bb.captureMessage("something worth knowing, not an error");
 ```
 
+Across services: `bb.requestHandler` continues the caller's trace when a request carries a W3C
+`traceparent` (or `X-Request-Id`) header, and `bb.instrumentFetch({ propagateTo })` (or
+`bb.traceHeaders()` for other HTTP clients) passes it on to the services you call, so one request's
+logs and errors share a trace id in every service. Outside Express, `traceFromHeaders(req.headers)`
+gives the incoming trace for your own `runWithContext`.
+
 `bb.requestHandler` synthesizes a `HandledHttpError` for any 5xx response that nothing else
 already reported — but never a duplicate if `bb.captureException`/`bb.captureMessage` (or
 `instrumentConsole`'s console hooks) already captured something during that same request. The
