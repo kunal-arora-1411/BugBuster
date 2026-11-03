@@ -107,8 +107,15 @@ newer (0.1.0 cannot send logs).
   before `bb.requestHandler` runs, so the BugBuster trace id equals the id users and support already
   see. `bb.instrumentConsole()` captures `console.error(err)` as an error;
   `bb.instrumentConsole({ logs: true })` also ships `console.log/info/warn/debug` as log lines.
+- **Calls to other services of this application:** if the service calls sibling services over
+  HTTP, pass the trace on so one request's logs span every service: `bb.instrumentFetch({
+  propagateTo: [<the internal base URLs>] })` once at startup for `fetch`, or
+  `headers: bb.traceHeaders()` (an axios interceptor, for example) for other clients. Only list
+  the application's own services, never outside APIs. `bb.requestHandler` already continues an
+  incoming `traceparent`.
 - **Other frameworks:** wrap each request or job in `runWithContext({ traceId, spanId }, () => …)`
-  (exported by the SDK) so its log lines and errors share one trace id; call `captureException` from
+  (exported by the SDK) so its log lines and errors share one trace id; for an HTTP request, start
+  from `traceFromHeaders(req.headers)` so a caller's trace continues. Call `captureException` from
   the framework's error hook.
 - **Delivery:** with `backendUrl` set and no BugBuster Agent on the host, each process sends its own
   batches over HTTPS ("direct mode"). That is what this integration uses. Installing the host Agent

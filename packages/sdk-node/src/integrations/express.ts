@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { format } from "node:util";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -6,6 +5,14 @@ import type { LogLevel } from "@bugbusterhq/types";
 import type { CaptureEngine } from "../capture.js";
 import { runWithContext } from "../context.js";
 import { createLogApi, type LogApi, type LogFields } from "../logger.js";
+import {
+  instrumentFetch,
+  newSpanId,
+  newTraceId,
+  traceFromHeaders,
+  traceHeaders,
+  type InstrumentFetchOptions,
+} from "../trace-propagation.js";
 
 /**
  * Auto-instrumentation for Express (and any framework with the same request/response/next
@@ -99,7 +106,8 @@ export interface InstrumentConsoleOptions {
 export interface BugBusterExpressIntegration extends CaptureEngine {
   /**
    * `app.use(bb.requestHandler)` — mount early, before routes. Propagates trace context for the
-   * lifetime of the request and, on `res.finish`, synthesizes a `HandledHttpError` for any 5xx
+   * lifetime of the request, continuing the caller's trace when the request carries one
+   * (`traceparent`, else the request id, else `X-Request-Id`), and, on `res.finish`, synthesizes a `HandledHttpError` for any 5xx
    * response that nothing else already reported (Appendix A's "never silently lose a failure"
    * invariant) without double-counting requests that called `bb.captureException` themselves.
    * With `logRequests` enabled it also writes the per-request access log line.
@@ -120,6 +128,17 @@ export interface BugBusterExpressIntegration extends CaptureEngine {
   instrumentConsole: (options?: InstrumentConsoleOptions) => () => void;
   /** `bb.log.info("order placed", { orderId })` — same API as `client.log`, trace-aware. */
   log: LogApi;
+  /**
+   * Headers that pass the current request's trace on to another service you call, so its logs
+   * and errors join this request's. For HTTP clients other than `fetch` (axios, got, http):
+   * `axios.get(url, { headers: bb.traceHeaders() })`. Empty outside a request.
+   */
+  traceHeaders: () => Record<string, string>;
+  /**
+   * `bb.instrumentFetch()` — once, at startup: every `fetch` made while handling a request
+   * carries its trace to the service it calls. Returns a restore function.
+   */
+  instrumentFetch: (options?: InstrumentFetchOptions) => () => void;
 }
 
 const CONSOLE_LOG_LEVELS = {
@@ -179,7 +198,15 @@ export function createExpressIntegration(
     next: (err?: unknown) => void,
   ): void {
     const state: RequestState = { captured: false };
-    const context = { traceId: req.requestId ?? randomUUID(), spanId: randomUUID() };
+    // A caller's traceparent wins: that is how a request keeps one trace across services. An
+    // upstream request-id middleware comes next, then a bare X-Request-Id header.
+    const incoming = traceFromHeaders(req.headers ?? {});
+    const fromCaller = incoming?.parentSpanId !== undefined ? incoming : undefined;
+    const context = {
+      traceId: fromCaller?.traceId ?? req.requestId ?? incoming?.traceId ?? newTraceId(),
+      spanId: newSpanId(),
+      ...(fromCaller ? { parentSpanId: fromCaller.parentSpanId } : {}),
+    };
     const startedAt = process.hrtime.bigint();
 
     res.once("finish", () => {
@@ -270,5 +297,7 @@ export function createExpressIntegration(
     log: createLogApi(tracked.captureLog),
     requestHandler,
     instrumentConsole,
+    traceHeaders: () => traceHeaders(),
+    instrumentFetch,
   };
 }
