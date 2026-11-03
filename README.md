@@ -529,7 +529,9 @@ updating.
 
 **0.3.0:** the SDK groups errors per service, so the fingerprint of every error changes once.
 After a service upgrades, its errors start new issues (with the same titles), and the old ones stop
-growing. The backend accepts both old and new SDKs.
+growing. The backend accepts both old and new SDKs. It also follows one request across services
+([One request across several services](#one-request-across-several-services)), and new trace ids
+are W3C-style 32-hex ids instead of UUIDs.
 
 ---
 
