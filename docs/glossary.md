@@ -495,6 +495,11 @@ Think of it as **a call stack that spans machines.** Each span records:
 Three fields are enough to reconstruct the whole tree, even though the pieces arrive from
 different servers at different times.
 
+**In BugBuster:** the SDK carries the trace between services in the W3C `traceparent` header (the
+one OpenTelemetry uses): `bb.requestHandler` reads it on the way in, and `bb.instrumentFetch()` /
+`bb.traceHeaders()` write it on the way out. Every service then stamps the same `traceId` on its log
+lines and errors.
+
 ### Head vs tail sampling
 
 ```text

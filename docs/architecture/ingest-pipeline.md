@@ -229,6 +229,11 @@ version skew is real.
 - **Mitigation B:** keep the durable log replayable, so history can be recomputed when the
   algorithm improves.
 
+**It happened once already.** SDK 0.3 added the service name to the hashed material, so the same
+error in two services is two issues. Neither mitigation is built yet, so the change was made
+additive instead: without a service the material is unchanged, the backend accepts both versions,
+and an upgraded service's errors simply start new issues while its old ones stop growing.
+
 ### 4.5 Cardinality is the real enemy — not volume
 
 Volume compresses. **Cardinality kills** — it blows up the SDK's fold table, the server-side

@@ -5,6 +5,8 @@ Copilot, …) **inside the repository of the Node.js service you want to monitor
 BugBuster SDK so that your errors and application logs show up in the BugBuster dashboard, and your
 developers can read them without access to the production server.
 
+Already using BugBuster on 0.1 or 0.2? Use [`upgrade-to-0.3.md`](upgrade-to-0.3.md) instead.
+
 The prompt is written so the agent works safely in a repository where other work is in progress: it
 makes its own branch, keeps its changes small and additive, can stack on an open pull request, and
 does nothing in tests or local development until an API key is set.
@@ -148,11 +150,13 @@ newer (0.1.0 cannot send logs).
    receives the redacted text; if load order cannot guarantee that, skip console capture and say why
    in the PR. Never ship output that the project deliberately redacts.
 3. **Request context:** mount the request handler (or `runWithContext`) so every log line written
-   while handling a request carries that request's trace id, equal to the existing request id when
-   there is one.
-4. **Every production process:** API servers, workers and scheduled jobs each initialise BugBuster
+   while handling a request carries that request's trace id: the caller's trace when another service
+   sent one (`traceparent`), otherwise the existing request id when there is one.
+4. **Calls to the application's own services:** pass the trace on (see "Calls to other services"
+   above), so one request can be followed into every service it calls. Never to outside APIs.
+5. **Every production process:** API servers, workers and scheduled jobs each initialise BugBuster
    with their own `project` name (for example `orders-api` and `orders-worker`).
-5. **Flush on shutdown** from the existing graceful-shutdown path. Do not add a signal handler that
+6. **Flush on shutdown** from the existing graceful-shutdown path. Do not add a signal handler that
    would stop the process from exiting the way it does today. On serverless, flush before the
    handler returns.
 
