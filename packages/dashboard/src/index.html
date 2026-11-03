@@ -234,7 +234,9 @@
   .bar-row:first-child .fill { background: var(--accent); }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 
-  .event { padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--rule); display: grid; gap: 8px; }
+  /* minmax(0, 1fr): a grid column defaults to its widest content, so one long stack line would
+     otherwise widen the whole page; capped, the stack scrolls inside its own box instead. */
+  .event { padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--rule); display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .event:first-child { padding-top: 0; margin-top: 0; border-top: none; }
   .event-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--fs-small); color: var(--muted); }
   .event-meta .role { color: var(--text); font-weight: 500; }
@@ -250,7 +252,7 @@
   .code-wrap { position: relative; }
   .code-wrap .copy { position: absolute; top: 14px; right: 6px; height: 26px; padding: 0 8px; font-size: var(--fs-small); }
 
-  .trail { display: grid; }
+  .trail { display: grid; grid-template-columns: minmax(0, 1fr); }
   .trail-row { display: grid; grid-template-columns: 64px 44px minmax(0, 1fr); gap: 8px; padding: 6px 0; border-top: 1px solid var(--rule); align-items: baseline; }
   .trail-row:first-child { border-top: none; }
   .trail-row .t { font-family: var(--mono); font-size: 12px; color: var(--muted); }
