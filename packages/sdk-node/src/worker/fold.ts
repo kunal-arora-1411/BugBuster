@@ -25,6 +25,7 @@ interface FoldEntry {
   endpointCounts: Map<string, number>;
   durationSamplesMs: number[];
   releases: Set<string>;
+  service: string;
   firstEvent: BugBusterEvent;
   lastEvent: BugBusterEvent;
   slowestEvent: BugBusterEvent;
@@ -64,6 +65,7 @@ export class FoldTable {
         endpointCounts: new Map(input.endpoint ? [[input.endpoint, 1]] : []),
         durationSamplesMs: input.durationMs !== undefined ? [input.durationMs] : [],
         releases: new Set(input.release ? [input.release] : []),
+        service: input.event.service.name,
         firstEvent: input.event,
         lastEvent: input.event,
         slowestEvent: input.event,
@@ -136,6 +138,7 @@ export class FoldTable {
         endpointCounts: Object.fromEntries(entry.endpointCounts),
         durationSamplesMs: entry.durationSamplesMs,
         release: [...entry.releases][0],
+        service: entry.service,
         exemplars: selectedExemplars.map((e) => e.eventId),
       });
     }

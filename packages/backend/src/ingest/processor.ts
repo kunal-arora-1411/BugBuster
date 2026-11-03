@@ -55,9 +55,20 @@ export async function processEnvelope(db: Db, rawBody: Buffer): Promise<ProcessR
   const stored = await insertLogs(db, validLogs);
   rejectedLogs += stored.rejected;
 
+  // Older SDKs send folds without the service; their example events in the same envelope carry it.
+  const serviceOfEvent = new Map<string, string>();
+  for (const item of items) {
+    if (item.type === "exemplar")
+      serviceOfEvent.set(item.payload.eventId, item.payload.service.name);
+  }
+
   for (const item of items) {
     if (item.type === "fold") {
-      await upsertFoldDelta(db, item.payload);
+      const fold = item.payload;
+      const service =
+        fold.service ??
+        fold.exemplars.map((id) => serviceOfEvent.get(id)).find((name) => name !== undefined);
+      await upsertFoldDelta(db, service ? { ...fold, service } : fold);
       fingerprintsSeen.add(item.payload.fingerprint);
       processedFolds++;
     } else if (item.type === "exemplar") {

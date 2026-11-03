@@ -23,7 +23,11 @@ export interface PipelineDeps {
 export function processCapture(raw: RawCapture, deps: PipelineDeps): void {
   const frames = raw.error ? parseStack(raw.error.stack) : [];
   const errorType = raw.error?.name ?? (raw.kind === "message" ? "Message" : "Error");
-  const fingerprint = computeFingerprint({ errorType, frames });
+  const fingerprint = computeFingerprint({
+    errorType,
+    frames,
+    service: deps.serviceContext.name,
+  });
 
   const isNewFingerprint = !deps.seenFingerprints.has(fingerprint);
   if (isNewFingerprint) {

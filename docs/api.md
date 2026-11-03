@@ -44,6 +44,7 @@ Lists the authenticated org's issues, most recently seen first.
 | Param | Meaning |
 |---|---|
 | `limit` | Max issues to return (default 50, capped at 200). |
+| `service` | Only issues seen in this service (the SDK's `project`). Pages stay within it. |
 | `cursor` | Opaque pagination token from a previous response's `nextCursor`. Omit for the first page. |
 
 **Response:**
@@ -61,6 +62,8 @@ Lists the authenticated org's issues, most recently seen first.
       "lastSeen": "2026-09-05T18:32:19.635Z",
       "exemplarRefs": [{ "eventId": "...", "role": "one-novel-stack" }],
       "adjustedCount": 1.0,
+      "title": { "type": "TypeError", "message": "Cannot read properties of undefined" },
+      "services": ["orders-api"],
       "fidelity": { "isExact": true, "adjustedCount": 1.0 }
     }
   ],
@@ -76,6 +79,15 @@ invalid or expired-looking cursor returns `400`, never a silently wrong page.
 Every issue carries `fidelity` (`packages/backend/src/query/fidelity.ts`) — `isExact: false` means
 `adjustedCount !== 1.0`, i.e. sampling was applied and `count` is a weighted estimate, never
 presented as unconditional truth (Appendix A's FIDELITY invariant).
+
+`services` lists every service the issue was seen in. The SDK groups errors per service (from
+0.3.0), so it is normally one name: the same error in two services is two issues. Issues grouped by
+an older SDK can list several.
+
+## `GET /issues/facets`
+
+`{ "services": ["billing-svc", "orders-api"] }` — every service any issue was seen in, sorted, for
+the Issues view's service filter.
 
 ## `GET /issues/:fingerprint`
 
@@ -173,7 +185,7 @@ a pathological query cannot pin the database.
 
 `{ "services": ["billing-svc", "demo-app"], "environments": ["development", "production"] }` —
 the distinct values present in the org's logs, for filter dropdowns. Cached for up to 60 s per
-org, and invalidated whenever new logs are ingested.
+org, so a newly deployed service can take a minute to appear.
 
 ## Log items on `POST /ingest`
 

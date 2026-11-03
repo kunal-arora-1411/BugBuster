@@ -61,6 +61,12 @@ export const IssueSchema = z.object({
    * without fetching every issue's examples. Absent until the issue has an example event.
    */
   title: z.object({ type: z.string(), message: z.string() }).optional(),
+  /**
+   * Every service (the SDK's `project`) this issue has been seen in. Errors are grouped per
+   * service, so this is normally one name; an issue from before that, or the shared overflow
+   * bucket, can list several. Empty for an issue no service was ever recorded for.
+   */
+  services: z.array(z.string().min(1)).default([]),
 });
 export type Issue = z.infer<typeof IssueSchema>;
 
@@ -81,6 +87,8 @@ export const FoldDeltaSchema = z.object({
   endpointCounts: z.record(z.string(), z.number().int().nonnegative()),
   durationSamplesMs: z.array(z.number().nonnegative()),
   release: z.string().min(1).optional(),
+  /** The service that saw these occurrences (its `project`). Absent from SDKs before 0.3.0. */
+  service: z.string().min(1).optional(),
   exemplars: z.array(z.string().min(1)), // event IDs generated in this window; payloads travel separately in the envelope
 });
 export type FoldDelta = z.infer<typeof FoldDeltaSchema>;

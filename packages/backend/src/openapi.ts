@@ -134,6 +134,13 @@ export function buildOpenApiDocument(): Record<string, unknown> {
               description: "Issues per page. Values above 200 are capped at 200.",
               schema: { type: "integer", minimum: 1, maximum: 200, default: 50 },
             },
+            {
+              name: "service",
+              in: "query",
+              required: false,
+              description: "Only issues seen in this service (the SDK's `project`).",
+              schema: { type: "string" },
+            },
             cursorParam,
           ],
           responses: {
@@ -152,6 +159,26 @@ export function buildOpenApiDocument(): Record<string, unknown> {
               "A page of issues.",
             ),
             "400": errorResponse("The cursor is not valid.", "invalid cursor"),
+            "401": unauthorized,
+            "403": orgDisabled,
+          },
+        },
+      },
+      "/issues/facets": {
+        get: {
+          tags: ["Issues"],
+          operationId: "getIssueFacets",
+          summary: "Distinct services issues were seen in",
+          description: "For the Issues view's service filter.",
+          responses: {
+            "200": json(
+              {
+                type: "object",
+                required: ["services"],
+                properties: { services: { type: "array", items: { type: "string" } } },
+              },
+              "Sorted distinct service names.",
+            ),
             "401": unauthorized,
             "403": orgDisabled,
           },

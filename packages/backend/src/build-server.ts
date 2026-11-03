@@ -14,7 +14,12 @@ import type { ControlDb, PublicKey, PublicOrg } from "./db/control.js";
 import { TenantDbResolver } from "./db/tenant.js";
 import { extractBearerToken, forgetOrg, noteKeyUse, resolveOrgForRequest } from "./ingest/edge.js";
 import { processEnvelope } from "./ingest/processor.js";
-import { decodeIssuesCursor, getIssue, listIssues } from "./db/collections/issues.js";
+import {
+  decodeIssuesCursor,
+  getIssue,
+  listIssueServices,
+  listIssues,
+} from "./db/collections/issues.js";
 import { getExemplarsByIds } from "./db/collections/events.js";
 import { decodeLogsCursor, getLogFacets, queryLogs, type LogQuery } from "./db/collections/logs.js";
 import { attachFidelity } from "./query/fidelity.js";
@@ -578,7 +583,7 @@ export function registerRoutes(
     await reply.code(202).send();
   });
 
-  app.get<{ Querystring: { limit?: string; cursor?: string } }>(
+  app.get<{ Querystring: { limit?: string; cursor?: string; service?: string } }>(
     "/issues",
     async (request, reply) => {
       const org = await requireOrg(request, reply, controlDb);
@@ -600,10 +605,24 @@ export function registerRoutes(
       }
 
       const db = await tenants.forOrgDb(org.dbName, org);
-      const page = await listIssues(db, { limit, cursor });
+      const page = await listIssues(db, {
+        limit,
+        cursor,
+        service: singleString(request.query.service),
+      });
       await reply.send({ issues: page.issues.map(attachFidelity), nextCursor: page.nextCursor });
     },
   );
+
+  // Distinct services issues were seen in, for the Issues view's filter. Not cached like the log
+  // facets: there is one issue per distinct error, so this walks a small index.
+  app.get("/issues/facets", async (request, reply) => {
+    const org = await requireOrg(request, reply, controlDb);
+    if (!org) return;
+
+    const db = await tenants.forOrgDb(org.dbName, org);
+    await reply.send({ services: await listIssueServices(db) });
+  });
 
   app.get<{ Params: { fingerprint: string } }>("/issues/:fingerprint", async (request, reply) => {
     const org = await requireOrg(request, reply, controlDb);

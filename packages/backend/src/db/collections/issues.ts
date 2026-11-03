@@ -1,4 +1,4 @@
-import { MongoServerError, type Collection, type Db } from "mongodb";
+import { MongoServerError, type Collection, type Db, type Filter } from "mongodb";
 import {
   ISSUE_TITLE_MAX_CHARS,
   type BugBusterEvent,
@@ -34,6 +34,8 @@ export interface IssueDocument {
   adjustedCount: number;
   /** From the first stored example event; see `Issue.title`. Older issues get it on first read. */
   title?: IssueTitle;
+  /** See `Issue.services`. Absent on issues stored before services were; filled on first read. */
+  services?: string[];
 }
 
 export interface IssueTitle {
@@ -67,38 +69,63 @@ export async function setIssueTitleIfMissing(
 }
 
 /**
- * Fills in the title of issues stored before titles existed, from their first example event:
- * one query for the whole page, written back so it happens once per issue. Best-effort: a
- * failure here only means those issues are listed without a title this time.
+ * Fills in what issues stored by an older backend lack, from their example events: the title
+ * (from the first example) and the services (from all of them). One query for the whole page,
+ * written back so it happens once per issue. Best-effort: a failure here only means those issues
+ * are listed without a title or services this time.
  */
-async function fillMissingTitles(db: Db, docs: IssueDocument[]): Promise<void> {
-  const needing = docs.filter((d) => !d.title && (d.exemplarRefs ?? []).length > 0);
+async function fillFromExamples(db: Db, docs: IssueDocument[]): Promise<void> {
+  const needing = docs.filter(
+    (d) => (!d.title || !d.services) && (d.exemplarRefs ?? []).length > 0,
+  );
   if (needing.length === 0) return;
   try {
-    const firstIds = needing.map((d) => d.exemplarRefs[0]!.eventId);
+    const ids = needing.flatMap((d) => d.exemplarRefs.map((r) => r.eventId));
     const events = await db
       .collection<BugBusterEvent>("events")
       .find(
-        { eventId: { $in: firstIds } },
-        { projection: { _id: 0, eventId: 1, type: 1, "error.type": 1, "error.message": 1 } },
+        { eventId: { $in: ids } },
+        {
+          projection: {
+            _id: 0,
+            eventId: 1,
+            type: 1,
+            "error.type": 1,
+            "error.message": 1,
+            "service.name": 1,
+          },
+        },
       )
       .toArray();
     const byId = new Map(events.map((e) => [e.eventId, e]));
     const writes = [];
     for (const doc of needing) {
-      const event = byId.get(doc.exemplarRefs[0]!.eventId);
-      if (!event) continue;
-      doc.title = titleFromEvent(event);
-      writes.push({
-        updateOne: {
-          filter: { fingerprint: doc.fingerprint, title: { $exists: false } },
-          update: { $set: { title: doc.title } },
-        },
-      });
+      const first = byId.get(doc.exemplarRefs[0]!.eventId);
+      if (!doc.title && first) {
+        doc.title = titleFromEvent(first);
+        writes.push({
+          updateOne: {
+            filter: { fingerprint: doc.fingerprint, title: { $exists: false } },
+            update: { $set: { title: doc.title } },
+          },
+        });
+      }
+      if (!doc.services) {
+        const names = doc.exemplarRefs
+          .map((r) => byId.get(r.eventId)?.service?.name)
+          .filter((n): n is string => !!n);
+        doc.services = [...new Set(names)];
+        writes.push({
+          updateOne: {
+            filter: { fingerprint: doc.fingerprint },
+            update: { $addToSet: { services: { $each: doc.services } } },
+          },
+        });
+      }
     }
     if (writes.length > 0) await issuesCollection(db).bulkWrite(writes, { ordered: false });
   } catch {
-    // listed without titles this time; the next read tries again
+    // listed without them this time; the next read tries again
   }
 }
 
@@ -112,6 +139,8 @@ function issuesCollection(db: Db): Collection<IssueDocument> {
 export async function ensureIssuesIndexes(db: Db): Promise<void> {
   await issuesCollection(db).createIndex({ fingerprint: 1 }, { unique: true });
   await issuesCollection(db).createIndex({ lastSeen: -1, fingerprint: -1 });
+  // The Issues view filtered to one service, in the same newest-first order.
+  await issuesCollection(db).createIndex({ services: 1, lastSeen: -1, fingerprint: -1 });
 }
 
 // Mongo field names historically disallowed literal dots; endpoint paths commonly contain
@@ -155,6 +184,7 @@ export async function upsertFoldDelta(db: Db, delta: FoldDelta): Promise<void> {
     $addToSet: {
       userIdSet: { $each: delta.userIds },
       releases: { $each: delta.release ? [delta.release] : [] },
+      services: { $each: delta.service ? [delta.service] : [] },
     },
     $push: {
       durationSamplesMs: { $each: delta.durationSamplesMs, $slice: -MAX_DURATION_SAMPLES },
@@ -254,6 +284,7 @@ function toPublicIssue(doc: IssueDocument): Issue {
     exemplarRefs: doc.exemplarRefs,
     adjustedCount: doc.adjustedCount,
     ...(doc.title ? { title: doc.title } : {}),
+    services: doc.services ?? [],
   };
 }
 
@@ -293,17 +324,16 @@ export function decodeIssuesCursor(raw: string): IssuesCursor | undefined {
  */
 export async function listIssues(
   db: Db,
-  opts: { limit?: number; cursor?: IssuesCursor } = {},
+  opts: { limit?: number; cursor?: IssuesCursor; service?: string } = {},
 ): Promise<IssuesPage> {
   const limit = opts.limit ?? 50;
-  const filter = opts.cursor
-    ? {
-        $or: [
-          { lastSeen: { $lt: opts.cursor.lastSeen } },
-          { lastSeen: opts.cursor.lastSeen, fingerprint: { $lt: opts.cursor.fingerprint } },
-        ],
-      }
-    : {};
+  const filter: Filter<IssueDocument> = opts.service ? { services: opts.service } : {};
+  if (opts.cursor) {
+    filter.$or = [
+      { lastSeen: { $lt: opts.cursor.lastSeen } },
+      { lastSeen: opts.cursor.lastSeen, fingerprint: { $lt: opts.cursor.fingerprint } },
+    ];
+  }
 
   const docs = await issuesCollection(db)
     .find(filter)
@@ -313,7 +343,7 @@ export async function listIssues(
 
   const hasMore = docs.length > limit;
   const page = hasMore ? docs.slice(0, limit) : docs;
-  await fillMissingTitles(db, page);
+  await fillFromExamples(db, page);
   const last = page[page.length - 1];
   return {
     issues: page.map(toPublicIssue),
@@ -324,9 +354,15 @@ export async function listIssues(
   };
 }
 
+/** Every service any issue has been seen in, for the Issues view's filter. */
+export async function listIssueServices(db: Db): Promise<string[]> {
+  const names = await issuesCollection(db).distinct("services", {}, { maxTimeMS: 5000 });
+  return (names as string[]).filter(Boolean).sort();
+}
+
 export async function getIssue(db: Db, fingerprint: string): Promise<Issue | undefined> {
   const doc = await issuesCollection(db).findOne({ fingerprint });
   if (!doc) return undefined;
-  await fillMissingTitles(db, [doc]);
+  await fillFromExamples(db, [doc]);
   return toPublicIssue(doc);
 }
