@@ -173,7 +173,6 @@
 
   /* ---- issues ---- */
   .split { margin-top: 8px; }
-  .split.has-detail { display: grid; grid-template-columns: minmax(0, 1fr) 460px; gap: var(--gap); align-items: start; }
   table { width: 100%; border-collapse: collapse; }
   th { text-align: left; font-weight: 400; font-size: var(--fs-small); color: var(--muted); height: 36px; padding: 0 12px; white-space: nowrap; }
   th.num, td.num { text-align: right; }
@@ -203,10 +202,14 @@
   .empty p { color: var(--muted); }
   .empty code { font-family: var(--mono); font-size: 13px; padding: 1px 4px; border-radius: 4px; background: var(--raised); }
 
-  /* ---- issue detail ---- */
-  .detail { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--sheet); position: sticky; top: 8px; max-height: calc(100vh - 16px); overflow: auto; overscroll-behavior: contain; }
+  /* ---- issue detail: opens in place under its row, like an expanded log line ---- */
+  tr.detail-row > td { padding: 0; border-top: none; background: var(--raised); }
+  /* width 0 + min-width 100%: fills its cell without letting a long stack line widen the table */
+  .detail { --rule: var(--border); border-bottom: 1px solid var(--border); width: 0; min-width: 100%; }
+  .detail pre.code { background: var(--sheet); }
   .detail-head { padding: 16px 20px; display: grid; gap: 8px; border-bottom: 1px solid var(--rule); }
-  .detail-head .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .detail-head .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .detail-head .top .actions { gap: 4px; }
   .detail-head h2 { font-size: var(--fs-section); font-weight: 600; line-height: 22px; overflow-wrap: anywhere; }
   .detail-head .msg { color: var(--muted); overflow-wrap: anywhere; }
   .detail-head .fp { display: flex; align-items: center; gap: 8px; color: var(--muted); }
@@ -311,13 +314,6 @@
 
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition-duration: 0ms !important; animation: none !important; }
-  }
-
-  /* ---- tablet: the detail replaces the list instead of sitting beside it ---- */
-  @media (max-width: 1199px) {
-    .split.has-detail { display: block; }
-    .split.has-detail .list-pane { display: none; }
-    .detail { position: static; max-height: none; }
   }
 
   /* ---- tablet and phone: the sidebar folds into a top bar; the sheet keeps the width ---- */
@@ -441,7 +437,6 @@
           <div class="empty" id="empty" hidden></div>
           <div class="more"><button id="loadMoreBtn" hidden>Load more issues</button></div>
         </div>
-        <aside class="detail" id="detail" hidden aria-label="Issue details"></aside>
       </div>
     </section>
 
@@ -622,13 +617,33 @@
     return e;
   }
 
+  /**
+   * Copies text and says so on the button. Falls back to a hidden textarea where the async
+   * clipboard API is missing or refused (an http:// or file:// page, an older browser).
+   */
   function copyToClipboard(text, btn) {
-    if (!navigator.clipboard || !navigator.clipboard.writeText) return;
-    navigator.clipboard.writeText(text).then(() => {
-      const old = btn.textContent;
-      btn.textContent = "Copied";
-      setTimeout(() => (btn.textContent = old), 1200);
-    }).catch(() => {});
+    const label = btn.dataset.label || btn.textContent;
+    btn.dataset.label = label;
+    const done = (ok) => {
+      btn.textContent = ok ? "Copied" : "Couldn’t copy";
+      setTimeout(() => { btn.textContent = label; delete btn.dataset.label; }, 1500);
+    };
+    const fallback = () => {
+      try {
+        const ta = el("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand("copy");
+        ta.remove();
+        done(ok);
+      } catch (_) { done(false); }
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => done(true), fallback);
+    else fallback();
   }
 
   /* ---- theme: System follows the OS; Light and Dark are remembered in this browser ---- */
@@ -662,6 +677,7 @@
   let sortKey = "lastSeen";
   let sortDir = "desc";
   let selectedFingerprint = null;
+  let detailRow = null;        // the open issue's detail, kept across re-renders (sort, filter, titles)
   const titles = new Map();    // fingerprint -> { type, message } from its first example event
   let titleQueue = [];
   let titlesInFlight = 0;
@@ -839,26 +855,32 @@
       } else rel.appendChild(el("span", "muted", "—"));
       const last = el("td", "num"); const w = el("span", "when", ago(issue.lastSeen)); w.title = formatIST(issue.lastSeen); last.appendChild(w);
 
+      const open = issue.fingerprint === selectedFingerprint;
+      btn.setAttribute("aria-expanded", String(open));
       tr.append(idCell, count, users, rel, last);
-      tr.addEventListener("click", () => showDetail(issue));
+      tr.addEventListener("click", () => (selectedFingerprint === issue.fingerprint ? closeDetail() : showDetail(issue)));
       body.appendChild(tr);
+      if (open && detailRow) body.appendChild(detailRow);
     }
   }
 
   function closeDetail(rerender = true) {
     selectedFingerprint = null;
-    $("detail").hidden = true;
-    $("issuesSplit").classList.remove("has-detail");
+    detailRow = null;
     if (rerender) renderAll();
   }
 
   async function showDetail(issue) {
     selectedFingerprint = issue.fingerprint;
-    renderAll();
-    const detail = $("detail");
-    detail.textContent = "";
-    detail.hidden = false;
-    $("issuesSplit").classList.add("has-detail");
+    // Everything this detail loads, kept so "Copy for AI agent" can put all of it in one report.
+    const state = { issue, exemplars: null, exemplarsError: "", trail: null };
+    const detail = el("div", "detail");
+    detail.setAttribute("role", "region");
+    detailRow = el("tr", "detail-row");
+    const cell = el("td");
+    cell.colSpan = 5;
+    cell.appendChild(detail);
+    detailRow.appendChild(cell);
 
     const t = titles.get(issue.fingerprint);
     const head = el("div", "detail-head");
@@ -866,10 +888,14 @@
     const h = el("h2", null, t && t.type ? t.type : "Issue");
     h.id = "detailTitle";
     detail.setAttribute("aria-labelledby", "detailTitle");
+    const actions = el("div", "actions");
+    const copyAll = el("button", null, "Copy for AI agent");
+    copyAll.title = "Copies everything about this issue as one Markdown report: the error, counts, example events with stack traces, and the failing request’s logs.";
     const close = el("button", "quiet", "Close");
     close.setAttribute("aria-label", "Close issue details");
     close.addEventListener("click", () => closeDetail());
-    top.append(h, close);
+    actions.append(copyAll, close);
+    top.append(h, actions);
     head.appendChild(top);
     const msgLine = el("p", "msg", t && t.message ? t.message : "");
     head.appendChild(msgLine);
@@ -951,12 +977,24 @@
     rawBlock.appendChild(raw);
     detail.appendChild(rawBlock);
 
-    if (window.matchMedia("(max-width: 1199px)").matches) detail.scrollIntoView({ block: "start" });
+    renderAll(); // puts the detail row under this issue's row
+    const row = document.querySelector(`tr.issue[data-fp="${CSS.escape(issue.fingerprint)}"]`);
+    if (row) row.scrollIntoView({ block: "nearest" });
+
+    let finishLoading;
+    const loaded = new Promise((resolve) => (finishLoading = resolve));
+    copyAll.addEventListener("click", async () => {
+      copyAll.textContent = "Preparing…";
+      await loaded;
+      copyAll.textContent = "Copy for AI agent";
+      copyToClipboard(buildIssueReport(state), copyAll);
+    });
 
     try {
       const data = await api("/issues/" + encodeURIComponent(issue.fingerprint) + "/exemplars");
       if (selectedFingerprint !== issue.fingerprint) return;
       const exemplars = data.exemplars || [];
+      state.exemplars = exemplars;
       const first = exemplars[0];
       if (first && !titles.get(issue.fingerprint)) {
         titles.set(issue.fingerprint, { type: first.error ? first.error.type : first.type, message: first.error ? first.error.message : "" });
@@ -966,11 +1004,84 @@
       }
       renderExemplars(evList, exemplars);
       const traced = exemplars.find((e) => e.trace && e.trace.traceId);
-      if (traced) renderTrail(trailBlock, traced, issue.fingerprint);
+      if (traced) state.trail = await renderTrail(trailBlock, traced, issue.fingerprint);
     } catch (err) {
+      state.exemplarsError = err.message;
       evList.textContent = "";
       evList.appendChild(el("p", "muted", "Couldn’t load the example events. " + err.message));
+    } finally {
+      finishLoading();
     }
+  }
+
+  /**
+   * Everything known about an issue as one Markdown document, for pasting into an AI coding agent
+   * (or a ticket): what failed and how often, where, every example event with its full stack trace,
+   * and the failing request's own log lines with their fields. Times are UTC, with IST beside them.
+   */
+  function buildIssueReport(state) {
+    const i = state.issue;
+    const t = titles.get(i.fingerprint) || {};
+    const fence = (text, lang) => {
+      const f = String(text).includes("```") ? "~~~" : "```";
+      return f + (lang || "") + "\n" + text + "\n" + f;
+    };
+    const when = (iso) => iso + " (" + formatIST(iso) + ")";
+    const out = [];
+    out.push("# Bug report: " + (t.type || "Error") + (t.message ? ": " + t.message : ""), "");
+    out.push("Exported from BugBuster on " + formatIST(new Date().toISOString()) + ". This error was captured in production by the BugBuster SDK; identical errors are grouped into this one issue.", "");
+
+    out.push("## Summary");
+    out.push("- **Error type:** " + (t.type || "unknown"));
+    out.push("- **Message:** " + (t.message || "none"));
+    out.push("- **Fingerprint:** `" + i.fingerprint + "`");
+    out.push("- **Events:** " + fmtNum(i.count) + (isExactOf(i) ? " (exact count)" : " (estimated from sampling, weight ×" + weightOf(i) + ")"));
+    out.push("- **Users affected:** " + fmtNum(i.usersAffected));
+    out.push("- **First seen:** " + when(i.firstSeen));
+    out.push("- **Last seen:** " + when(i.lastSeen));
+    out.push("- **Releases:** " + ((i.releases || []).join(", ") || "none recorded"));
+    const d = i.duration || {};
+    out.push("- **Request duration:** median " + fmtNum(d.p50) + " ms, 95th percentile " + fmtNum(d.p95) + " ms, 99th percentile " + fmtNum(d.p99) + " ms");
+    out.push("");
+
+    out.push("## Where it happens");
+    const eps = (i.topEndpoints && i.topEndpoints.top) || [];
+    const other = (i.topEndpoints && i.topEndpoints.other) || 0;
+    if (eps.length === 0 && other === 0) out.push("No endpoint was recorded with these events.");
+    else {
+      out.push("| Endpoint | Events |", "|---|---:|");
+      for (const e of eps) out.push("| `" + e.endpoint + "` | " + fmtNum(e.count) + " |");
+      if (other) out.push("| other endpoints | " + fmtNum(other) + " |");
+    }
+    out.push("");
+
+    out.push("## Example events");
+    if (state.exemplars === null) out.push("The example events couldn’t be loaded" + (state.exemplarsError ? ": " + state.exemplarsError : "") + ".");
+    else if (state.exemplars.length === 0) out.push("No example event has been kept for this issue yet.");
+    state.exemplars && state.exemplars.forEach((ev, n) => {
+      out.push("", "### " + (n + 1) + ". " + (ROLE[ev.exemplarRole] || ev.exemplarRole) + ", " + when(ev.timestamp));
+      if (ev.service) out.push("- **Service:** " + ev.service.name + " " + ev.service.version + " (" + ev.service.environment + ")");
+      if (ev.source) out.push("- **Source:** `" + ev.source.file + ":" + ev.source.line + "` in `" + ev.source.function + "`");
+      if (ev.trace && ev.trace.traceId) out.push("- **Trace id:** `" + ev.trace.traceId + "`");
+      out.push("- **Event id:** `" + ev.eventId + "`");
+      out.push("", "**" + (ev.error ? ev.error.type : ev.type) + ":** " + (ev.error ? ev.error.message : "no message"));
+      if (ev.error && ev.error.stacktrace) out.push("", fence(ev.error.stacktrace));
+    });
+    out.push("");
+
+    if (state.trail) {
+      const tr = state.trail;
+      out.push("## What the failing request logged");
+      out.push("Trace id `" + tr.traceId + "`, " + plural(tr.lines.length, "line") + " in the order they were written" + (tr.more ? " (the request wrote more than these; see the Logs view)" : "") + ".", "");
+      if (tr.lines.length === 0) out.push("This request wrote no log lines.");
+      else out.push(fence(tr.lines.map((l) =>
+        l.timestamp + " " + l.level.toUpperCase().padEnd(5) + " " + (l.service ? l.service.name + " " : "") + l.message +
+        (l.fields && Object.keys(l.fields).length ? "  " + JSON.stringify(l.fields) : "")).join("\n")));
+      out.push("");
+    }
+
+    out.push("## Raw issue data", fence(JSON.stringify(i, null, 2), "json"));
+    return out.join("\n") + "\n";
   }
 
   const ROLE = { first: "First seen", last: "Most recent", slowest: "Slowest", "one-per-release": "First in its release", "one-novel-stack": "New stack trace" };
@@ -1018,6 +1129,7 @@
   // What the failing request did before it failed: its own log lines, in order, under the error.
   // Errors and logs meet at the trace id; this is that meeting, shown where the error is read.
   async function renderTrail(block, ev, fp) {
+    const SHOWN = 12;
     block.hidden = false;
     block.textContent = "";
     const h = el("h3", null, "What this request logged");
@@ -1026,16 +1138,21 @@
     list.appendChild(el("p", "muted", "Loading…"));
     block.appendChild(list);
     try {
-      const data = await api("/logs?" + new URLSearchParams({ traceId: ev.trace.traceId, limit: "12" }).toString());
-      if (selectedFingerprint !== fp) return;
+      const data = await api("/logs?" + new URLSearchParams({ traceId: ev.trace.traceId, limit: "100" }).toString());
+      if (selectedFingerprint !== fp) return null;
       const lines = (data.logs || []).slice().reverse(); // oldest first: read it as a story
+      const trail = { traceId: ev.trace.traceId, lines, more: !!data.nextCursor };
       list.textContent = "";
       if (lines.length === 0) {
         list.appendChild(el("p", "muted", "This request wrote no log lines. Lines are linked to a request when the service uses the SDK’s requestHandler."));
-        return;
+        return trail;
       }
-      h.appendChild(el("span", "muted", plural(lines.length, "line") + (data.nextCursor ? ", more in Logs" : "")));
-      for (const l of lines) {
+      // The end of the request is where it failed, so a long trail shows its last lines here; the
+      // report and the Logs view have all of them.
+      h.appendChild(el("span", "muted", lines.length > SHOWN
+        ? "last " + SHOWN + " of " + plural(lines.length, "line") + (trail.more ? "+" : "")
+        : plural(lines.length, "line") + (trail.more ? ", more in Logs" : "")));
+      for (const l of lines.slice(-SHOWN)) {
         const r = el("div", "trail-row lvl-" + l.level);
         r.append(el("span", "t", tf.format(new Date(l.timestamp))), el("span", "log-level", l.level), el("span", "m", l.message));
         list.appendChild(r);
@@ -1045,9 +1162,11 @@
       open.addEventListener("click", () => openLogsForTrace(ev.trace.traceId));
       foot.appendChild(open);
       block.appendChild(foot);
+      return trail;
     } catch (err) {
       list.textContent = "";
       list.appendChild(el("p", "muted", "Couldn’t load this request’s logs. " + err.message));
+      return null;
     }
   }
 
