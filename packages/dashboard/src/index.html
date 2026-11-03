@@ -695,6 +695,9 @@
       const data = await api("/issues" + (append && nextCursor ? "?cursor=" + encodeURIComponent(nextCursor) : ""));
       nextCursor = data.nextCursor;
       const issues = data.issues || [];
+      // Backends from this release send each issue's title; older ones don't, and those issues
+      // fall back to reading it from their first example event (queueTitles skips the rest).
+      for (const i of issues) if (i.title) titles.set(i.fingerprint, i.title);
       allIssues = append ? allIssues.concat(issues) : issues;
       if (!append) closeDetail(false);
       $("issuesFresh").textContent = "Updated " + tf.format(new Date());
