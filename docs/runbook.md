@@ -22,15 +22,17 @@ doesn't care how it got there.)
 
 ## 3. Create an organization
 
-There's no HTTP endpoint for this yet (`docs/api.md`'s "Not yet built") — at pilot scale, a CLI
-run by whoever operates the backend is the honest v1 answer:
+With the backend's admin token set (`BUGBUSTER_ADMIN_TOKEN`), use the admin page at
+`http://localhost:8080/admin` or `POST /admin/orgs` (see the README's
+[Managing organizations](../README.md#managing-organizations-the-admin-page)). For a fixed key you
+choose yourself, as below, use the CLI:
 
 ```bash
 cd packages/backend
 pnpm create-org org_demo "Demo Org" bugbuster_org_demo demo-api-key
 ```
 
-This writes one record into the shared `bugbuster_control` database.
+This writes the org and its first key into the shared `bugbuster_control` database.
 
 ## 4. Start the backend
 
@@ -83,7 +85,8 @@ curl -H "Authorization: Bearer demo-api-key" "http://localhost:8080/logs?level=e
 
 Set `BUGBUSTER_LOG_RETENTION_DAYS` on the backend (default 7) to control how long logs are kept.
 
-## What's not here yet
+## Next
 
-See `docs/api.md` for the full response shapes. The dashboard (`packages/dashboard`, `pnpm dev`)
+See `docs/api.md` for the full response shapes, or open `http://localhost:8080/docs` for the
+interactive API docs. The dashboard (`packages/dashboard`, `pnpm dev`)
 shows both issues and logs.

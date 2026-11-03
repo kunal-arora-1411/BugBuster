@@ -145,7 +145,7 @@ are never folded: one stored document per line (see [`schema.md`](schema.md)).
 | `level` | Exact levels to include, comma-separated: `debug`, `info`, `warn`, `error` (e.g. `?level=warn,error`). Case-insensitive. |
 | `service` | Exact service name (the SDK's `project`). |
 | `environment` | Exact environment (`production`, `staging`, ...). |
-| `traceId` | Everything logged during one request — the link from an error to its logs. |
+| `traceId` | Everything logged during one request — the link from an error to its logs. With SDK 0.3 on both sides of a call, this includes the lines from every service the request went through. |
 | `q` | Case-insensitive **substring** match on the message. Treated literally: `a.b` matches `a.b`, never `axb`; regex characters are not interpreted. Max 200 chars. |
 | `from`, `to` | ISO-8601 bounds on the line's timestamp (inclusive). |
 | `limit` | Lines per page (default 100, max 500). |

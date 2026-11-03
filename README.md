@@ -51,7 +51,7 @@ Two kinds of telemetry travel the same pipeline, treated oppositely on purpose:
 
 They meet at the **trace id**: every log line written during a request carries the same id as the
 errors that request raised, so the dashboard jumps from an error straight to everything that
-request logged.
+request logged, in every service it passed through.
 
 Throughout this README, **`https://bugbuster.example.com`** stands for wherever *you* deploy the
 backend.
@@ -206,6 +206,8 @@ BUGBUSTER_CONTROL_DB_URI="mongodb+srv://..." pnpm cleanup-events
 > **Using an AI coding agent?** [`docs/ai-agent-integration.md`](docs/ai-agent-integration.md) has a
 > ready-made prompt to paste into Claude Code, Cursor, Codex or Copilot in your service's
 > repository. It does the steps below for you, on its own branch, without disturbing other open work.
+> Already on 0.1 or 0.2? [`docs/upgrade-to-0.3.md`](docs/upgrade-to-0.3.md) has the prompt for
+> upgrading.
 
 ### 1. Get an API key
 
@@ -431,7 +433,7 @@ app's own unit, so it survives app deploys. Config is written to `/etc/bugbuster
 |---|---|
 | `--socket-path` | `/var/run/bugbuster/agent.sock` (the SDK's default — leave it unless you must change both) |
 | `--spool-dir` | `/var/lib/bugbuster/spool` — failed batches wait here (up to 64 MB, 24 h) |
-| `--commit` | `main` — **pin a tag or SHA in production**, e.g. `--commit v0.2.0` |
+| `--commit` | `main` — **pin a tag or SHA in production**, e.g. `--commit v0.3.0` |
 | `--install-dir` / `--user` / `--repo-url` | `/opt/bugbuster/source` / `bugbuster` / this repo |
 
 Day-2 operations:
@@ -484,7 +486,8 @@ backend's URL (it defaults to `http://localhost:8080`) and your **API key**.
 - **Issues** — every error type with its count, users affected, durations, top endpoints and
   example events (with stack traces). A badge shows whether the count is exact or sampled. With
   more than one service, a **Service** column and filter appear; the same error in two services is
-  two issues.
+  two issues. An issue opens under its row with the failing request's log lines (from every service
+  it went through) and a **Copy issue** button that copies it all as one report for an AI agent.
 - **Logs** — search, filter by level / service / environment / time, **Live** tail, and from any
   error example: *View logs for this request*.
 
@@ -522,14 +525,17 @@ key, then *Try it out*) and the OpenAPI 3.1 document at `/openapi.json`. A copy 
 
    Use **pnpm**, not `npm publish` — only pnpm rewrites the `workspace:^` dependencies between the
    packages into real version ranges. Each package rebuilds itself before publishing.
-3. Tag it: `git tag v0.2.0 && git push origin v0.2.0`.
+3. Tag it: `git tag v0.3.0 && git push origin v0.3.0`.
 
 The SDK and Agent report their own `package.json` version to the backend, so no other place needs
 updating.
 
 **0.3.0:** the SDK groups errors per service, so the fingerprint of every error changes once.
 After a service upgrades, its errors start new issues (with the same titles), and the old ones stop
-growing. The backend accepts both old and new SDKs.
+growing. The backend accepts both old and new SDKs. It also follows one request across services
+([One request across several services](#one-request-across-several-services)), and new trace ids
+are W3C-style 32-hex ids instead of UUIDs. To upgrade a service with an AI coding agent, use
+[`docs/upgrade-to-0.3.md`](docs/upgrade-to-0.3.md).
 
 ---
 

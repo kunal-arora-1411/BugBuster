@@ -33,6 +33,10 @@ client.captureMessage("something worth knowing, not an error");
 await client.shutdown();
 ```
 
+`project` names this service. Errors are grouped per service (from 0.3.0), so the same error in two
+of your services is two issues, and the dashboard can filter issues and logs by service. Give each
+service its own name; send them all to one organization to see them on one dashboard.
+
 ## Logs
 
 Normal application logs — not just errors — stored line by line and searchable in the dashboard:

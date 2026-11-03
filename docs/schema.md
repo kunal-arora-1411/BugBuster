@@ -9,13 +9,17 @@ exists so you don't have to reverse-engineer the schema from the code.
 
 ```text
 bugbuster_control                  <- one shared database
-  orgs: { orgId, name, dbName, apiKeyHash, createdAt }
+  orgs:         { orgId UNIQUE, name, dbName, createdAt, logRetentionDays?, disabled?, disabledAt?,
+                  apiKeyHash? }     <- apiKeyHash: legacy single key, copied into `keys` at startup
+  keys:         { keyId, orgId, name, keyHash UNIQUE, createdAt, lastUsedAt?, revokedAt? }
+                                    <- several named keys per org; only the SHA-256 is stored
+  admin_events: { at, action, orgId?, detail? }    <- the admin page's change history
 
 bugbuster_org_<name>                <- one database PER organization
-  issues, events, deploys           <- see below
+  issues, events, deploys, logs     <- see below
 ```
 
-A request resolves its API key against `bugbuster_control.orgs` **before** touching any tenant
+A request resolves its API key against `bugbuster_control.keys` **before** touching any tenant
 database (`packages/backend/src/db/control.ts` → `packages/backend/src/db/tenant.ts`). Every
 collection call downstream operates on a `Db` handle bound to exactly one `dbName` — there is no
 shared collection with an `org_id` filter to forget. See
@@ -40,15 +44,27 @@ issues:
   lastSeen          string (ISO datetime), INDEXED (desc, for dashboard sort)
   exemplarRefs      { eventId, role }[]            <- capped at 6, enforced in application code
   adjustedCount     number, defaults 1.0           <- sampling weight (§5.2 — never omit this)
+  title?            { type, message }              <- from the first stored example; message <= 500 chars
+  services?         string[]                       <- every service (SDK `project`) it was seen in
 ```
+
+Indexes: `fingerprint` (unique), `(lastSeen -1, fingerprint -1)` for the default newest-first
+list, and `(services, lastSeen -1, fingerprint -1)` for the list filtered to one service. Issues
+stored by an older backend get `title` and `services` from their example events the first time
+they are read, written back once.
+
+**Errors are grouped per service.** From SDK 0.3 the service name is part of the fingerprint, so the
+same error in two services is two documents. `services` normally holds one name; it can hold
+several for issues grouped by an older SDK, or for the shared overflow bucket.
 
 **Why `durationSamplesMs` is capped, not unbounded:** percentiles are computed from the most
 recent 1000 samples via `$push` + `$slice: -1000`, not the issue's entire lifetime. A bounded,
 honestly-approximate choice — at pilot volume this cap is rarely hit at all.
 
 **The atomic fold-merge upsert** (`upsertFoldDelta`) is one `updateOne` call per `FoldDelta`:
-`$inc` for `count` and per-endpoint counts, `$addToSet` for `userIdSet`/`releases`, `$push` for
-`durationSamplesMs`. Two things this function specifically guards against (found by the E2E test,
+`$inc` for `count` and per-endpoint counts, `$addToSet` for `userIdSet`/`releases`/`services`,
+`$push` for `durationSamplesMs`. A delta from an SDK before 0.3 carries no service; it is taken
+from that delta's example events in the same request. Two things this function specifically guards against (found by the E2E test,
 see `examples/demo-app/README.md`):
 
 - An empty `endpointCounts` on the incoming delta means `$inc` never mentions that field at all,
@@ -129,6 +145,7 @@ with `receivedAt` at ingest so it cannot sit at the top of every view.
 | `logId` (unique) | Idempotent ingest: a retried batch cannot duplicate lines. |
 | `(timestamp -1, logId -1)` | The default view and cursor pagination (`logId` breaks ties within a millisecond). |
 | `(service.name, timestamp -1, logId -1)` | "Only `billing-svc`" with the sort served by the index, no in-memory sort. |
+| `(service.environment, timestamp -1, logId -1)` | "Only `production`", the same way; also lets the facets' distinct environments walk the index. |
 | `(trace.traceId, timestamp -1, logId -1)` (partial) | "Everything this request did". Partial so lines with no trace don't bloat it. |
 | `receivedAt` TTL (`receivedAt_ttl`) | Retention (default 7 days). |
 
@@ -139,7 +156,16 @@ wants.
 
 **Retention is a setting, not a migration.** The TTL is applied when a tenant database is first
 used after a process start; changing `BUGBUSTER_LOG_RETENTION_DAYS` updates the existing index in
-place (`collMod`), and `0` removes the TTL index entirely.
+place (`collMod`), and `0` removes the TTL index entirely. An org can override the default with its
+own `logRetentionDays` (set on the admin page).
+
+**Compression.** A new `logs` collection is created with zstd block compression (log lines compress
+well); an existing one keeps the compressor it was created with. `GET /admin/storage` reports which
+one each collection uses.
+
+**Trace ids.** `trace.traceId` is whatever the SDK put in the request context. From SDK 0.3 a new
+trace is a W3C 32-hex id, and a request that came from another service keeps that service's trace
+id, so one request's lines from several services share it.
 
 **Scale note.** Every line is a document carrying several indexes. That is comfortable at the
 volumes this project targets; if you reach the point where log ingest rather than error ingest

@@ -31,7 +31,9 @@ SDK(s) on this host --UDS--> UdsServer --merge--> AgentHttpClient --HTTPS--> bac
 
 - **Cross-process folding** (`merge-fold-deltas.ts`) — combines same-fingerprint deltas from every
   service on the host before the one outbound request, preserving the highest priority seen for
-  each fingerprint so a "never-shed" signal from any one service survives the merge.
+  each fingerprint so a "never-shed" signal from any one service survives the merge. From SDK 0.3
+  the service name is part of the fingerprint, so this only ever merges a service with itself (its
+  other processes on the host); two services' deltas stay separate issues.
 - **Log forwarding** (`uds-server.ts`) — `log` items are forwarded as-is, *never* folded (a line is its
   own record), in batches capped at 512 KB so an outbound request can't exceed the backend's size
   limit. The Agent bounds its own memory: past `maxPendingLogs` (default 50,000 lines) or

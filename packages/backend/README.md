@@ -36,8 +36,9 @@ Changing it takes effect on existing data the next time a process starts — no 
 ## MongoDB schema
 
 See [`docs/schema.md`](../../docs/schema.md) for the full reference. Short version: one
-`bugbuster_control` database (org lookup), one `bugbuster_org_<name>` database per organization
-with `issues` / `events` / `deploys` collections. The **stored** `issues` document differs from
+`bugbuster_control` database (orgs, their API keys, the admin change history), one
+`bugbuster_org_<name>` database per organization with `issues` / `events` / `deploys` / `logs`
+collections. The **stored** `issues` document differs from
 the **public** `Issue` wire shape (`@bugbusterhq/types`) — see the comment atop
 `src/db/collections/issues.ts` for why: exact `usersAffected`/`duration`/`topEndpoints` are
 *derived* at read time from raw stored ingredients (a deduplicated user-ID set, raw duration
