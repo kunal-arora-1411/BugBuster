@@ -409,7 +409,7 @@ app's own unit, so it survives app deploys. Config is written to `/etc/bugbuster
 |---|---|
 | `--socket-path` | `/var/run/bugbuster/agent.sock` (the SDK's default — leave it unless you must change both) |
 | `--spool-dir` | `/var/lib/bugbuster/spool` — failed batches wait here (up to 64 MB, 24 h) |
-| `--commit` | `main` — **pin a tag or SHA in production**, e.g. `--commit v0.2.0` |
+| `--commit` | `main` — **pin a tag or SHA in production**, e.g. `--commit v0.3.0` |
 | `--install-dir` / `--user` / `--repo-url` | `/opt/bugbuster/source` / `bugbuster` / this repo |
 
 Day-2 operations:
@@ -500,7 +500,7 @@ key, then *Try it out*) and the OpenAPI 3.1 document at `/openapi.json`. A copy 
 
    Use **pnpm**, not `npm publish` — only pnpm rewrites the `workspace:^` dependencies between the
    packages into real version ranges. Each package rebuilds itself before publishing.
-3. Tag it: `git tag v0.2.0 && git push origin v0.2.0`.
+3. Tag it: `git tag v0.3.0 && git push origin v0.3.0`.
 
 The SDK and Agent report their own `package.json` version to the backend, so no other place needs
 updating.

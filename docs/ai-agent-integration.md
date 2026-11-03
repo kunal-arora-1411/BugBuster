@@ -82,7 +82,7 @@ Before changing anything, find out and write down in your plan:
   resolving it on someone else's branch.
 
 ## 3. The SDK: facts to rely on
-Read the package README on npm (`@bugbusterhq/sdk-node`) before writing code. Use version `^0.2.0` or
+Read the package README on npm (`@bugbusterhq/sdk-node`) before writing code. Use version `^0.3.0` or
 newer (0.1.0 cannot send logs).
 - **ESM only.** `require()` of it works on Node ≥ 20.19 and ≥ 22.12. On a CommonJS project whose
   production Node may be older, load it with `await import("@bugbusterhq/sdk-node")` inside your
