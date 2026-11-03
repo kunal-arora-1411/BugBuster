@@ -273,19 +273,20 @@
   @keyframes pulse { 50% { opacity: 0.3; } }
 
   .loglist { margin-top: 8px; }
-  .log-head, .log-row { display: grid; grid-template-columns: 104px 52px 140px minmax(0, 1fr); gap: 12px; padding: 0 12px; }
+  /* The time column fits a line from an earlier day too ("12 Nov 19:48:32.556", 19 mono characters). */
+  .log-head, .log-row { display: grid; grid-template-columns: 144px 52px 140px minmax(0, 1fr); gap: 12px; padding: 0 12px; }
   .log-head { height: 36px; align-items: center; font-size: var(--fs-small); color: var(--muted); }
   .log-row { padding-top: 8px; padding-bottom: 8px; border-top: 1px solid var(--rule); cursor: pointer; align-items: baseline; }
   .log-row:hover { background: color-mix(in srgb, var(--raised) 70%, transparent); }
   .log-row.open { background: var(--active); }
-  .log-time { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .log-time { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .log-level { font-size: var(--fs-small); font-weight: 500; color: var(--muted); }
   .lvl-warn .log-level { color: var(--warning); }
   .lvl-error .log-level { color: var(--negative); }
   .log-svc { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .log-msg { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .log-row.open .log-msg { display: block; }
-  .log-detail { padding: 16px 12px 20px 128px; background: var(--active); border-top: 1px solid var(--rule); display: grid; gap: 16px; }
+  .log-detail { padding: 16px 12px 20px 168px; background: var(--active); border-top: 1px solid var(--rule); display: grid; gap: 16px; }
   .log-detail pre.code { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--sheet); }
   .kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px 24px; }
   .kv .k { font-size: var(--fs-small); color: var(--muted); }
