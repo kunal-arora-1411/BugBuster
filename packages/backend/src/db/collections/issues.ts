@@ -1,5 +1,11 @@
 import { MongoServerError, type Collection, type Db } from "mongodb";
-import type { ExemplarRef, FoldDelta, Issue } from "@bugbusterhq/types";
+import {
+  ISSUE_TITLE_MAX_CHARS,
+  type BugBusterEvent,
+  type ExemplarRef,
+  type FoldDelta,
+  type Issue,
+} from "@bugbusterhq/types";
 
 const DUPLICATE_KEY_ERROR_CODE = 11000;
 
@@ -26,6 +32,74 @@ export interface IssueDocument {
   lastSeen: string;
   exemplarRefs: ExemplarRef[];
   adjustedCount: number;
+  /** From the first stored example event; see `Issue.title`. Older issues get it on first read. */
+  title?: IssueTitle;
+}
+
+export interface IssueTitle {
+  type: string;
+  message: string;
+}
+
+/** The title an example event gives its issue. */
+export function titleFromEvent(
+  event: Pick<BugBusterEvent, "type"> & { error?: { type: string; message: string } },
+): IssueTitle {
+  return {
+    type: event.error?.type ?? event.type,
+    message: (event.error?.message ?? "").slice(0, ISSUE_TITLE_MAX_CHARS),
+  };
+}
+
+/**
+ * Gives an issue its title if it has none yet. The first example event names the issue, and
+ * later ones never rename it, so the list stays stable while an error keeps happening.
+ */
+export async function setIssueTitleIfMissing(
+  db: Db,
+  fingerprint: string,
+  title: IssueTitle,
+): Promise<void> {
+  await issuesCollection(db).updateOne(
+    { fingerprint, title: { $exists: false } },
+    { $set: { title } },
+  );
+}
+
+/**
+ * Fills in the title of issues stored before titles existed, from their first example event:
+ * one query for the whole page, written back so it happens once per issue. Best-effort: a
+ * failure here only means those issues are listed without a title this time.
+ */
+async function fillMissingTitles(db: Db, docs: IssueDocument[]): Promise<void> {
+  const needing = docs.filter((d) => !d.title && (d.exemplarRefs ?? []).length > 0);
+  if (needing.length === 0) return;
+  try {
+    const firstIds = needing.map((d) => d.exemplarRefs[0]!.eventId);
+    const events = await db
+      .collection<BugBusterEvent>("events")
+      .find(
+        { eventId: { $in: firstIds } },
+        { projection: { _id: 0, eventId: 1, type: 1, "error.type": 1, "error.message": 1 } },
+      )
+      .toArray();
+    const byId = new Map(events.map((e) => [e.eventId, e]));
+    const writes = [];
+    for (const doc of needing) {
+      const event = byId.get(doc.exemplarRefs[0]!.eventId);
+      if (!event) continue;
+      doc.title = titleFromEvent(event);
+      writes.push({
+        updateOne: {
+          filter: { fingerprint: doc.fingerprint, title: { $exists: false } },
+          update: { $set: { title: doc.title } },
+        },
+      });
+    }
+    if (writes.length > 0) await issuesCollection(db).bulkWrite(writes, { ordered: false });
+  } catch {
+    // listed without titles this time; the next read tries again
+  }
 }
 
 const MAX_DURATION_SAMPLES = 1000;
@@ -179,6 +253,7 @@ function toPublicIssue(doc: IssueDocument): Issue {
     lastSeen: doc.lastSeen,
     exemplarRefs: doc.exemplarRefs,
     adjustedCount: doc.adjustedCount,
+    ...(doc.title ? { title: doc.title } : {}),
   };
 }
 
@@ -238,6 +313,7 @@ export async function listIssues(
 
   const hasMore = docs.length > limit;
   const page = hasMore ? docs.slice(0, limit) : docs;
+  await fillMissingTitles(db, page);
   const last = page[page.length - 1];
   return {
     issues: page.map(toPublicIssue),
@@ -250,5 +326,7 @@ export async function listIssues(
 
 export async function getIssue(db: Db, fingerprint: string): Promise<Issue | undefined> {
   const doc = await issuesCollection(db).findOne({ fingerprint });
-  return doc ? toPublicIssue(doc) : undefined;
+  if (!doc) return undefined;
+  await fillMissingTitles(db, [doc]);
+  return toPublicIssue(doc);
 }

@@ -1,6 +1,12 @@
 import type { Db } from "mongodb";
 import { decodeEnvelopeItems, LogEntrySchema, type LogEntry } from "@bugbusterhq/types";
-import { addExemplarRef, removeExemplarRef, upsertFoldDelta } from "../db/collections/issues.js";
+import {
+  addExemplarRef,
+  removeExemplarRef,
+  setIssueTitleIfMissing,
+  titleFromEvent,
+  upsertFoldDelta,
+} from "../db/collections/issues.js";
 import { insertExemplar } from "../db/collections/events.js";
 import { insertLogs } from "../db/collections/logs.js";
 
@@ -93,6 +99,8 @@ async function storeExemplar(db: Db, event: ExemplarPayload): Promise<boolean> {
     });
     if (!claimed) return false;
     await insertExemplar(db, event);
+    // The first example an issue keeps also names it, so the issue list needs no extra reads.
+    await setIssueTitleIfMissing(db, event.fingerprint, titleFromEvent(event)).catch(() => {});
     return true;
   } catch {
     if (claimed) await removeExemplarRef(db, event.fingerprint, event.eventId).catch(() => {});

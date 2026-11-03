@@ -37,6 +37,9 @@ export const ExemplarRefSchema = z.object({
 });
 export type ExemplarRef = z.infer<typeof ExemplarRefSchema>;
 
+/** Longest error message kept on an issue's title; the full message stays on its example events. */
+export const ISSUE_TITLE_MAX_CHARS = 500;
+
 export const IssueSchema = z.object({
   fingerprint: z.string().min(1),
   count: z.number().int().nonnegative(),
@@ -52,6 +55,12 @@ export const IssueSchema = z.object({
   // Sampling weight. Defaults to 1.0 (no sampling applied). ingest-pipeline.md §5.2:
   // "Always store the sampling weight" — never present a sampled count as unconditional truth.
   adjustedCount: z.number().positive().default(1.0),
+  /**
+   * What the error says, from the issue's first stored example event: its error type and
+   * message (the message capped at ISSUE_TITLE_MAX_CHARS). Lets a list of issues read as errors
+   * without fetching every issue's examples. Absent until the issue has an example event.
+   */
+  title: z.object({ type: z.string(), message: z.string() }).optional(),
 });
 export type Issue = z.infer<typeof IssueSchema>;
 
