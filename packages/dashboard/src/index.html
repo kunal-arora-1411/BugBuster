@@ -872,7 +872,7 @@
 
   async function showDetail(issue) {
     selectedFingerprint = issue.fingerprint;
-    // Everything this detail loads, kept so "Copy for AI agent" can put all of it in one report.
+    // Everything this detail loads, kept so "Copy issue" can put all of it in one report.
     const state = { issue, exemplars: null, exemplarsError: "", trail: null };
     const detail = el("div", "detail");
     detail.setAttribute("role", "region");
@@ -889,7 +889,7 @@
     h.id = "detailTitle";
     detail.setAttribute("aria-labelledby", "detailTitle");
     const actions = el("div", "actions");
-    const copyAll = el("button", null, "Copy for AI agent");
+    const copyAll = el("button", null, "Copy issue");
     copyAll.title = "Copies everything about this issue as one Markdown report: the error, counts, example events with stack traces, and the failing request’s logs.";
     const close = el("button", "quiet", "Close");
     close.setAttribute("aria-label", "Close issue details");
@@ -986,7 +986,7 @@
     copyAll.addEventListener("click", async () => {
       copyAll.textContent = "Preparing…";
       await loaded;
-      copyAll.textContent = "Copy for AI agent";
+      copyAll.textContent = "Copy issue";
       copyToClipboard(buildIssueReport(state), copyAll);
     });
 
