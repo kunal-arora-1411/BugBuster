@@ -26,6 +26,12 @@ export function normalizeStack(frames: StackFrame[]): string {
 export interface FingerprintInput {
   errorType: string;
   frames: StackFrame[];
+  /**
+   * The service that threw it. Part of the hashed material, so the same error in two services
+   * (a shared library, or the SDK's own HTTP-status errors, whose stacks are all library code)
+   * stays two issues, one per service, instead of one issue counting both.
+   */
+  service?: string;
 }
 
 /**
@@ -60,7 +66,9 @@ function computeFingerprintAtDepth(input: FingerprintInput, depth: number): stri
 
   const frames = candidateFrames.slice(0, Math.max(depth, 1));
   const normalizedStack = normalizeStack(frames);
-  const material = `${input.errorType}::${normalizedStack}::${primaryFunction(frames)}`;
+  const base = `${input.errorType}::${normalizedStack}::${primaryFunction(frames)}`;
+  // Without a service the material is unchanged, so those fingerprints match earlier releases.
+  const material = input.service ? `${input.service}::${base}` : base;
   return `fp_${createHash("sha256").update(material).digest("hex").slice(0, 16)}`;
 }
 

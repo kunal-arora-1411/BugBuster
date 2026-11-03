@@ -61,6 +61,22 @@ describe("computeFingerprint", () => {
   });
 });
 
+describe("computeFingerprint — per service", () => {
+  const frames = parseStack(STACK_A);
+
+  it("keeps the same error in two services apart", () => {
+    const auth = computeFingerprint({ errorType: "PaymentTimeout", frames, service: "auth" });
+    const billing = computeFingerprint({ errorType: "PaymentTimeout", frames, service: "billing" });
+    expect(auth).not.toBe(billing);
+    expect(auth).toBe(computeFingerprint({ errorType: "PaymentTimeout", frames, service: "auth" }));
+  });
+
+  it("leaves fingerprints without a service as they were", () => {
+    // Pinned to the value 0.2.0 produced for this input.
+    expect(computeFingerprint({ errorType: "PaymentTimeout", frames })).toBe("fp_e3cf1c1d19c97109");
+  });
+});
+
 describe("computeCoarsenedFingerprint", () => {
   it("collides two related-but-distinct stacks that share the same innermost (throw-site) frame once truncated to depth 1", () => {
     // computeCoarsenedFingerprint keeps the N frames CLOSEST to the throw site (frames[0..N)),

@@ -176,6 +176,8 @@
   table { width: 100%; border-collapse: collapse; }
   th { text-align: left; font-weight: 400; font-size: var(--fs-small); color: var(--muted); height: 36px; padding: 0 12px; white-space: nowrap; }
   th.num, td.num { text-align: right; }
+  #issuesTable.one-service .col-service { display: none; }
+  td.col-service { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   th button.sort { height: 24px; padding: 0 4px; margin: 0 -4px; border: none; background: none; color: inherit; font-size: inherit; font-weight: inherit; }
   th button.sort:hover { color: var(--text); background: none; }
   th[aria-sort] button.sort { color: var(--text); }
@@ -340,7 +342,7 @@
     .titlerow { flex-wrap: wrap; }
     .toolbar .search { max-width: none; flex-basis: 100%; }
     .toolbar select { flex: 1 1 140px; }
-    .col-users, .col-release { display: none; }
+    .col-users, .col-release, .col-service { display: none; }
     th, td { padding-left: 8px; padding-right: 8px; }
     .figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .figures > div:nth-child(3) { border-left: none; }
@@ -415,6 +417,7 @@
       </div>
       <div class="toolbar">
         <input id="search" class="search" type="search" placeholder="Filter by message, fingerprint or release…" aria-label="Filter issues" autocomplete="off" spellcheck="false">
+        <select id="issueService" aria-label="Service" hidden><option value="">All services</option></select>
         <select id="fidelityFilter" aria-label="Count accuracy">
           <option value="all">All counts</option>
           <option value="exact">Exact counts</option>
@@ -425,10 +428,11 @@
 
       <div class="split" id="issuesSplit">
         <div class="list-pane">
-          <table id="issuesTable" hidden>
+          <table id="issuesTable" class="one-service" hidden>
             <thead>
               <tr>
                 <th data-key="message" style="width:55%"><button class="sort">Issue<span class="sort-glyph"></span></button></th>
+                <th data-key="services" class="col-service"><button class="sort">Service<span class="sort-glyph"></span></button></th>
                 <th data-key="count" class="num"><button class="sort">Events<span class="sort-glyph"></span></button></th>
                 <th data-key="usersAffected" class="num col-users"><button class="sort">Users<span class="sort-glyph"></span></button></th>
                 <th data-key="releases" class="col-release"><button class="sort">Release<span class="sort-glyph"></span></button></th>
@@ -684,6 +688,8 @@
   const titles = new Map();    // fingerprint -> { type, message } from its first example event
   let titleQueue = [];
   let titlesInFlight = 0;
+  let issueServices = [];      // every service issues were seen in, from /issues/facets
+  let issueFacetsLoadedFor = "";
 
   const isExactOf = (i) => (i.fidelity ? i.fidelity.isExact : i.adjustedCount === 1);
   const weightOf = (i) => (i.fidelity ? i.fidelity.adjustedCount : i.adjustedCount);
@@ -692,7 +698,12 @@
     saveConnection();
     setStatus(append ? "Loading more issues…" : "Loading issues…");
     try {
-      const data = await api("/issues" + (append && nextCursor ? "?cursor=" + encodeURIComponent(nextCursor) : ""));
+      if (!append) loadIssueFacets();
+      const p = new URLSearchParams();
+      if ($("issueService").value) p.set("service", $("issueService").value);
+      if (append && nextCursor) p.set("cursor", nextCursor);
+      const qs = p.toString();
+      const data = await api("/issues" + (qs ? "?" + qs : ""));
       nextCursor = data.nextCursor;
       const issues = data.issues || [];
       // Backends from this release send each issue's title; older ones don't, and those issues
@@ -709,6 +720,27 @@
       $("issuesTable").hidden = true;
       $("loadMoreBtn").hidden = true;
     }
+  }
+
+  // The Service column and filter only appear once issues come from more than one service; with
+  // one service they would repeat the same name on every row.
+  async function loadIssueFacets() {
+    const { url, key } = conn();
+    if (!key || issueFacetsLoadedFor === url + key) return;
+    try {
+      const f = await api("/issues/facets");
+      issueServices = f.services || [];
+      issueFacetsLoadedFor = url + key;
+      fillSelect($("issueService"), "All services", issueServices);
+      renderAll();
+    } catch (_) { /* an older backend: no service filter */ }
+  }
+  function updateServiceControls() {
+    const names = new Set(issueServices);
+    for (const i of allIssues) for (const s of i.services || []) names.add(s);
+    const several = names.size > 1 || !!$("issueService").value;
+    $("issueService").hidden = !several;
+    $("issuesTable").classList.toggle("one-service", !several);
   }
 
   function setStatus(text, isError, retry) {
@@ -764,7 +796,7 @@
     const q = $("search").value.trim().toLowerCase();
     if (q) {
       const t = titles.get(issue.fingerprint);
-      const hay = [issue.fingerprint, ...(issue.releases || []), t ? t.type + " " + t.message : ""].join(" ").toLowerCase();
+      const hay = [issue.fingerprint, ...(issue.releases || []), ...(issue.services || []), t ? t.type + " " + t.message : ""].join(" ").toLowerCase();
       if (!hay.includes(q)) return false;
     }
     const f = $("fidelityFilter").value;
@@ -776,6 +808,7 @@
   function sortValue(issue, key) {
     if (key === "message") { const t = titles.get(issue.fingerprint); return (t ? t.type + " " + t.message : issue.fingerprint).toLowerCase(); }
     if (key === "releases") return (issue.releases || []).join(",");
+    if (key === "services") return (issue.services || []).join(",").toLowerCase();
     return issue[key];
   }
 
@@ -786,6 +819,7 @@
       const cmp = typeof av === "string" && typeof bv === "string" ? av.localeCompare(bv) : (av > bv) - (av < bv);
       return sortDir === "asc" ? cmp : -cmp;
     });
+    updateServiceControls();
     renderSummary(filtered);
     renderTable(sorted);
     document.querySelectorAll("#issuesTable th").forEach((th) => {
@@ -818,7 +852,12 @@
       $("issuesTable").hidden = true;
       empty.hidden = false;
       empty.textContent = "";
-      if (allIssues.length === 0) {
+      if (allIssues.length === 0 && $("issueService").value) {
+        empty.appendChild(el("h2", null, "No issues in " + $("issueService").value));
+        const all = el("button", null, "Show all services");
+        all.addEventListener("click", () => { $("issueService").value = ""; loadIssues(false); });
+        empty.appendChild(all);
+      } else if (allIssues.length === 0) {
         empty.appendChild(el("h2", null, "No errors reported yet"));
         const p = el("p");
         p.append("Errors appear here once a service using the SDK captures one, for example with ");
@@ -851,6 +890,13 @@
       if (!isExactOf(issue)) meta.appendChild(el("span", "pill warning", "≈ estimate, ×" + weightOf(issue) + " weight"));
       idCell.appendChild(meta);
 
+      const svc = el("td", "col-service");
+      const services = issue.services || [];
+      if (services.length) {
+        svc.appendChild(el("span", null, services[0]));
+        if (services.length > 1) svc.appendChild(el("span", "muted", " +" + (services.length - 1)));
+        svc.title = services.join(", ");
+      } else svc.appendChild(el("span", "muted", "—"));
       const count = el("td", "num"); count.appendChild(el("span", "fig", fmtNum(issue.count)));
       const users = el("td", "num col-users"); users.appendChild(el("span", "fig", fmtNum(issue.usersAffected)));
       const rel = el("td", "col-release");
@@ -863,7 +909,7 @@
 
       const open = issue.fingerprint === selectedFingerprint;
       btn.setAttribute("aria-expanded", String(open));
-      tr.append(idCell, count, users, rel, last);
+      tr.append(idCell, svc, count, users, rel, last);
       tr.addEventListener("click", () => (selectedFingerprint === issue.fingerprint ? closeDetail() : showDetail(issue)));
       body.appendChild(tr);
       if (open && detailRow) body.appendChild(detailRow);
@@ -884,7 +930,7 @@
     detail.setAttribute("role", "region");
     detailRow = el("tr", "detail-row");
     const cell = el("td");
-    cell.colSpan = 5;
+    cell.colSpan = 6;
     cell.appendChild(detail);
     detailRow.appendChild(cell);
 
@@ -956,6 +1002,15 @@
       epBlock.appendChild(bars);
     }
     detail.appendChild(epBlock);
+
+    if ((issue.services || []).length) {
+      const svcBlock = el("section", "block");
+      svcBlock.appendChild(el("h3", null, issue.services.length === 1 ? "Service" : "Services"));
+      const svcChips = el("div", "chips");
+      for (const s of issue.services) svcChips.appendChild(el("span", "pill neutral mono", s));
+      svcBlock.appendChild(svcChips);
+      detail.appendChild(svcBlock);
+    }
 
     const relBlock = el("section", "block");
     relBlock.appendChild(el("h3", null, "Releases"));
@@ -1045,6 +1100,7 @@
     out.push("- **Users affected:** " + fmtNum(i.usersAffected));
     out.push("- **First seen:** " + when(i.firstSeen));
     out.push("- **Last seen:** " + when(i.lastSeen));
+    out.push("- **Service:** " + ((i.services || []).join(", ") || "not recorded"));
     out.push("- **Releases:** " + ((i.releases || []).join(", ") || "none recorded"));
     const d = i.duration || {};
     out.push("- **Request duration:** median " + fmtNum(d.p50) + " ms, 95th percentile " + fmtNum(d.p95) + " ms, 99th percentile " + fmtNum(d.p99) + " ms");
@@ -1186,6 +1242,7 @@
   });
   $("search").addEventListener("input", renderAll);
   $("fidelityFilter").addEventListener("change", renderAll);
+  $("issueService").addEventListener("change", () => loadIssues(false));
   $("loadMoreBtn").addEventListener("click", () => loadIssues(true));
   $("issuesRefreshBtn").addEventListener("click", () => loadIssues(false));
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && selectedFingerprint && !$("connDialog").open) closeDetail(); });
@@ -1244,6 +1301,7 @@
     saveConnection();
     placeConnectionForm();
     facetsLoadedFor = "";
+    issueFacetsLoadedFor = ""; issueServices = []; $("issueService").value = "";
     issuesRequested = false;
     allIssues = []; nextCursor = undefined;
     logs = []; seenLogIds = new Set(); logsNextCursor = undefined; stopTail();

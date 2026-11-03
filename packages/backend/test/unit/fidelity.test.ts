@@ -14,6 +14,7 @@ function issue(overrides: Partial<Issue> = {}): Issue {
     lastSeen: new Date().toISOString(),
     exemplarRefs: [],
     adjustedCount: 1.0,
+    services: [],
     ...overrides,
   };
 }

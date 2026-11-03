@@ -60,6 +60,15 @@
             }
           },
           {
+            "name": "service",
+            "in": "query",
+            "required": false,
+            "description": "Only issues seen in this service (the SDK's `project`).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "cursor",
             "in": "query",
             "required": false,
@@ -104,6 +113,65 @@
                 },
                 "example": {
                   "error": "invalid cursor"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "invalid api key"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The organization has been disabled by an operator. Nothing to retry; ask them to enable it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "organization is disabled"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/issues/facets": {
+      "get": {
+        "tags": [
+          "Issues"
+        ],
+        "operationId": "getIssueFacets",
+        "summary": "Distinct services issues were seen in",
+        "description": "For the Issues view's service filter.",
+        "responses": {
+          "200": {
+            "description": "Sorted distinct service names.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "services"
+                  ],
+                  "properties": {
+                    "services": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1639,6 +1707,14 @@
                   "message"
                 ],
                 "additionalProperties": false
+              },
+              "services": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "default": []
               }
             },
             "required": [
@@ -1958,6 +2034,10 @@
                     }
                   },
                   "release": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "service": {
                     "type": "string",
                     "minLength": 1
                   },

@@ -63,6 +63,21 @@ describe("FoldTable — exact aggregation (v1)", () => {
   });
 });
 
+describe("FoldTable — service", () => {
+  it("names the service that saw the occurrences on each delta", () => {
+    const table = new FoldTable(10_000);
+    table.record({
+      fingerprint: "fp_a",
+      isNewFingerprint: true,
+      event: makeEvent({
+        fingerprint: "fp_a",
+        service: { name: "auth", version: "1", environment: "production" },
+      }),
+    });
+    expect(table.drain().deltas[0]?.service).toBe("auth");
+  });
+});
+
 describe("FoldTable — exemplar policy", () => {
   it("selects first, last, and slowest as distinct exemplars for a valid batch with a clear ordering", () => {
     const table = new FoldTable(10_000);

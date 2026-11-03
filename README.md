@@ -213,6 +213,12 @@ Create an organization on your backend (see [Managing organizations](#managing-o
 and take its **API key**. That key identifies your org on every request. Treat it like a password:
 keep it in an environment variable or your secret manager, never in source control.
 
+**Several microservices?** Use **one organization for the whole application**, not one per
+service: the dashboard shows one organization at a time. Give each service its own named key on
+the admin page (so you can revoke one without touching the others) and its own `project` name in
+`init()`. Logs and issues from every service then appear together, with a **Service** column and
+filter on both views.
+
 ### 2. Install the SDK
 
 ```bash
@@ -454,7 +460,9 @@ run `pnpm --filter @bugbusterhq/dashboard dev` and go to <http://localhost:5173>
 backend's URL (it defaults to `http://localhost:8080`) and your **API key**.
 
 - **Issues** — every error type with its count, users affected, durations, top endpoints and
-  example events (with stack traces). A badge shows whether the count is exact or sampled.
+  example events (with stack traces). A badge shows whether the count is exact or sampled. With
+  more than one service, a **Service** column and filter appear; the same error in two services is
+  two issues.
 - **Logs** — search, filter by level / service / environment / time, **Live** tail, and from any
   error example: *View logs for this request*.
 
@@ -496,6 +504,10 @@ key, then *Try it out*) and the OpenAPI 3.1 document at `/openapi.json`. A copy 
 
 The SDK and Agent report their own `package.json` version to the backend, so no other place needs
 updating.
+
+**0.3.0:** the SDK groups errors per service, so the fingerprint of every error changes once.
+After a service upgrades, its errors start new issues (with the same titles), and the old ones stop
+growing. The backend accepts both old and new SDKs.
 
 ---
 
