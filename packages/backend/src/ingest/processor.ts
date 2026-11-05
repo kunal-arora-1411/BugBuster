@@ -9,6 +9,7 @@ import {
 } from "../db/collections/issues.js";
 import { insertExemplar } from "../db/collections/events.js";
 import { insertLogs } from "../db/collections/logs.js";
+import { recordCauseLinks } from "../db/collections/issue-links.js";
 
 /**
  * The one place the JSON parse happens (ingest-pipeline.md §8.1's v1 nuance — see edge.ts).
@@ -30,6 +31,8 @@ export interface ProcessResult {
    */
   alertCandidates: number;
   fingerprintsSeen: string[];
+  /** Cause -> effect pairs added to (root-cause-graph.md §5). */
+  processedLinks: number;
 }
 
 export async function processEnvelope(db: Db, rawBody: Buffer): Promise<ProcessResult> {
@@ -39,6 +42,7 @@ export async function processEnvelope(db: Db, rawBody: Buffer): Promise<ProcessR
   let processedExemplars = 0;
   let droppedExemplars = 0;
   let alertCandidates = 0;
+  let processedLinks = 0;
   const validLogs: LogEntry[] = [];
   let rejectedLogs = 0;
 
@@ -82,6 +86,8 @@ export async function processEnvelope(db: Db, rawBody: Buffer): Promise<ProcessR
         { environments },
       );
       if (created || newPlace) alertCandidates++;
+      // The fold's cause links (root-cause-graph.md §5), right after the fold they belong to.
+      processedLinks += await recordCauseLinks(db, fold.fingerprint, fold.causedBy);
       fingerprintsSeen.add(item.payload.fingerprint);
       processedFolds++;
     } else if (item.type === "exemplar") {
@@ -102,6 +108,7 @@ export async function processEnvelope(db: Db, rawBody: Buffer): Promise<ProcessR
     rejectedLogs,
     alertCandidates,
     fingerprintsSeen: [...fingerprintsSeen],
+    processedLinks,
   };
 }
 

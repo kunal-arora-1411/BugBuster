@@ -23,4 +23,6 @@ export interface RawCapture {
   timestampMs: number;
   release?: string;
   environment?: string;
+  /** The request's `downstreamCause` at the moment of capture (see context.ts). */
+  causedBy?: string;
 }

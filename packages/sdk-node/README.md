@@ -123,8 +123,16 @@ Across services: `bb.requestHandler` continues the caller's trace when a request
 logs and errors share a trace id in every service. Outside Express, `traceFromHeaders(req.headers)`
 gives the incoming trace for your own `runWithContext`.
 
+Root cause across services ([`root-cause-graph.md`](../../docs/architecture/root-cause-graph.md)):
+on a 5xx answered to a traced caller, `bb.requestHandler` adds an `X-BB-Cause` header naming the
+issue the request failed with (`causeHeader: false` turns it off). An instrumented `fetch` reads it
+from the responses it gets, and `bb.noteDownstreamResponse(res)` does the same for other HTTP
+clients; errors captured later in that request carry the link, counted in the fold delta's
+`causedBy`. `client.fingerprintOf(err)` gives the fingerprint an error is grouped under.
+
 `bb.requestHandler` synthesizes a `HandledHttpError` for any 5xx response that nothing else
-already reported — but never a duplicate if `bb.captureException`/`bb.captureMessage` (or
+already reported (grouped by method and route; its stack is fixed, so the issue doesn't move when
+the SDK is upgraded) — but never a duplicate if `bb.captureException`/`bb.captureMessage` (or
 `instrumentConsole`'s console hooks) already captured something during that same request. The
 core `captureException` also dedupes the same `Error` *object* captured twice (e.g. via a console
 hook and a manual call for the same thrown error) — one occurrence, not two.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mergeFoldDeltas } from "../../src/merge-fold-deltas.js";
-import type { FoldDelta } from "@bugbusterhq/types";
+import { MAX_CAUSES_PER_DELTA, type FoldDelta } from "@bugbusterhq/types";
 
 function delta(overrides: Partial<FoldDelta>): FoldDelta {
   return {
@@ -60,5 +60,29 @@ describe("mergeFoldDeltas — cross-process fold (the Agent's reason to exist)",
     const merged = mergeFoldDeltas([a, b]);
     expect(merged[0]?.windowStart).toBe("2026-01-01T00:00:00.000Z");
     expect(merged[0]?.windowEnd).toBe("2026-01-01T00:00:10.000Z");
+  });
+});
+
+describe("mergeFoldDeltas — cause links (root-cause-graph.md §3)", () => {
+  it("sums causedBy across processes, like counts, without touching its inputs", () => {
+    const a = delta({ count: 3, causedBy: { fp_cause1: 3 } });
+    const b = delta({ count: 4, causedBy: { fp_cause1: 1, fp_cause2: 2 } });
+    const [merged] = mergeFoldDeltas([a, b]);
+    expect(merged?.causedBy).toEqual({ fp_cause1: 4, fp_cause2: 2 });
+    expect(a.causedBy).toEqual({ fp_cause1: 3 });
+  });
+
+  it("keeps a link carried only by a later delta, and leaves causedBy off when none has one", () => {
+    expect(mergeFoldDeltas([delta({}), delta({ causedBy: { fp_c: 2 } })])[0]?.causedBy).toEqual({
+      fp_c: 2,
+    });
+    expect(mergeFoldDeltas([delta({}), delta({})])[0]?.causedBy).toBeUndefined();
+  });
+
+  it("caps distinct causes at MAX_CAUSES_PER_DELTA", () => {
+    const many = (from: number) =>
+      Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`fp_${from + i}`, 1]));
+    const [merged] = mergeFoldDeltas([delta({ causedBy: many(0) }), delta({ causedBy: many(10) })]);
+    expect(Object.keys(merged?.causedBy ?? {})).toHaveLength(MAX_CAUSES_PER_DELTA);
   });
 });

@@ -6,6 +6,7 @@ import {
   type FoldDelta,
   type Issue,
 } from "@bugbusterhq/types";
+import { strongestCauses } from "./issue-links.js";
 
 const DUPLICATE_KEY_ERROR_CODE = 11000;
 
@@ -316,6 +317,40 @@ export async function removeExemplarRef(
   await issuesCollection(db).updateOne({ fingerprint }, { $pull: { exemplarRefs: { eventId } } });
 }
 
+/** How much of an issue a link explains: the link's count over the issue's, capped at 1. */
+export function shareOf(linkCount: number, issueCount: number): number {
+  if (issueCount <= 0) return 0;
+  return Math.min(1, linkCount / issueCount);
+}
+
+/**
+ * Adds each issue's strongest cause (root-cause-graph.md §6). One aggregation for the whole
+ * page. Best-effort: if it fails, the issues are listed without causes rather than not at all.
+ */
+async function withCauses(db: Db, issues: Issue[]): Promise<Issue[]> {
+  try {
+    const strongest = await strongestCauses(
+      db,
+      issues.map((i) => i.fingerprint),
+    );
+    if (strongest.size === 0) return issues;
+    return issues.map((issue) => {
+      const link = strongest.get(issue.fingerprint);
+      if (!link) return issue;
+      return {
+        ...issue,
+        causedBy: {
+          fingerprint: link.cause,
+          count: link.count,
+          share: shareOf(link.count, issue.count),
+        },
+      };
+    });
+  } catch {
+    return issues;
+  }
+}
+
 function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0;
   const idx = Math.min(sorted.length - 1, Math.floor(p * sorted.length));
@@ -410,7 +445,7 @@ export async function listIssues(
   await fillFromExamples(db, page);
   const last = page[page.length - 1];
   return {
-    issues: page.map(toPublicIssue),
+    issues: await withCauses(db, page.map(toPublicIssue)),
     nextCursor:
       hasMore && last
         ? encodeIssuesCursor({ lastSeen: last.lastSeen, fingerprint: last.fingerprint })
@@ -495,5 +530,19 @@ export async function getIssue(db: Db, fingerprint: string): Promise<Issue | und
   const doc = await issuesCollection(db).findOne({ fingerprint });
   if (!doc) return undefined;
   await fillFromExamples(db, [doc]);
-  return toPublicIssue(doc);
+  const [issue] = await withCauses(db, [toPublicIssue(doc)]);
+  return issue;
+}
+
+/** Several issues by fingerprint, titled, without causes — for the cause graph's neighbours. */
+export async function getIssuesByFingerprints(
+  db: Db,
+  fingerprints: readonly string[],
+): Promise<Map<string, Issue>> {
+  if (fingerprints.length === 0) return new Map();
+  const docs = await issuesCollection(db)
+    .find({ fingerprint: { $in: [...fingerprints] } })
+    .toArray();
+  await fillFromExamples(db, docs);
+  return new Map(docs.map((d) => [d.fingerprint, toPublicIssue(d)]));
 }

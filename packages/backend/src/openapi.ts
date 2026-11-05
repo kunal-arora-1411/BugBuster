@@ -203,6 +203,56 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           },
         },
       },
+      "/issues/{fingerprint}/causes": {
+        get: {
+          tags: ["Issues"],
+          operationId: "getIssueCauses",
+          summary: "Get an issue's causes, effects and root cause",
+          description:
+            "Cause and effect across services. When a service answers another traced service " +
+            "with a 5xx, it names the issue it failed with (the `X-BB-Cause` response header), " +
+            "and the caller's later errors in that request are counted against it. `causedBy` " +
+            "lists the issues that failed first, downstream, when this one happened; `caused` " +
+            "the issues this one led to upstream; both strongest first, at most 20. `share` is " +
+            "how much of the effect a link explains (link count / effect count). `rootCause` " +
+            "follows the strongest cause while its share is at least 0.5, and is null when this " +
+            "issue is not a symptom of another.",
+          parameters: [fingerprintParam],
+          responses: {
+            "200": json(
+              {
+                type: "object",
+                required: ["rootCause", "causedBy", "caused"],
+                properties: {
+                  rootCause: {
+                    oneOf: [
+                      {
+                        type: "object",
+                        required: ["issue", "path"],
+                        properties: {
+                          issue: ref("Issue"),
+                          path: {
+                            type: "array",
+                            items: { type: "string" },
+                            description: "Fingerprints walked, this issue first, the root last.",
+                          },
+                        },
+                      },
+                      { type: "null" },
+                    ],
+                  },
+                  causedBy: { type: "array", items: ref("CauseEntry") },
+                  caused: { type: "array", items: ref("CauseEntry") },
+                },
+              },
+              "The issue's neighbourhood in the cause graph.",
+            ),
+            "401": unauthorized,
+            "403": orgDisabled,
+            "404": errorResponse("No such fingerprint in your organization.", "not found"),
+          },
+        },
+      },
       "/issues/{fingerprint}/exemplars": {
         get: {
           tags: ["Issues"],
@@ -1016,6 +1066,15 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         Event: {
           description: "One complete example event (exemplar) kept for an issue.",
           ...schemaOf(BugBusterEventSchema),
+        },
+        CauseEntry: {
+          type: "object",
+          required: ["issue", "count", "share"],
+          properties: {
+            issue: ref("Issue"),
+            count: { type: "integer", description: "Occurrences of the effect after the cause." },
+            share: { type: "number", minimum: 0, maximum: 1 },
+          },
         },
         LogEntry: { description: "One application log line.", ...schemaOf(LogEntrySchema) },
         EnvelopeItem: {

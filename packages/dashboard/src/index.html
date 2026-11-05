@@ -235,6 +235,16 @@
   .bar-row .fill { height: 2px; background: var(--muted); }
   .bar-row:first-child .fill { background: var(--accent); }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  /* Cause and effect across services (docs/architecture/root-cause-graph.md) */
+  .issue-meta .caused-by { color: var(--warning); min-width: 0; overflow-wrap: anywhere; }
+  .root-cause { border: 1px solid var(--rule); border-left: 3px solid var(--warning); border-radius: var(--radius-chip); padding: 10px 12px; margin-bottom: 12px; display: grid; gap: 4px; }
+  .root-cause > button.link, .links li button.link { justify-self: start; text-align: left; overflow-wrap: anywhere; white-space: normal; max-width: 100%; }
+  .root-cause .k { font-size: var(--fs-small); color: var(--warning); font-weight: 600; }
+  .root-cause .path { font-size: var(--fs-small); }
+  .links { display: grid; gap: 6px; margin: 0 0 12px; padding: 0; list-style: none; }
+  .links li { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; min-width: 0; }
+  .links li button.link { text-align: left; min-width: 0; overflow-wrap: anywhere; }
+  .links h4 { font-size: var(--fs-small); font-weight: 600; margin: 0 0 6px; }
 
   /* minmax(0, 1fr): a grid column defaults to its widest content, so one long stack line would
      otherwise widen the whole page; capped, the stack scrolls inside its own box instead. */
@@ -875,6 +885,35 @@
       (nextCursor ? " Older issues are available below." : "");
   }
 
+  // ---- Cause and effect across services ---------------------------------------------------------
+  const SYMPTOM_MIN_SHARE = 0.5; // same threshold the backend's root-cause walk uses
+  const pct = (share) => Math.round(share * 100) + "%";
+  function issueLabel(issue) {
+    const t = issue.title || titles.get(issue.fingerprint);
+    const name = t && (t.type || t.message) ? (t.type || "Error") + (t.message ? ": " + t.message : "") : issue.fingerprint;
+    const svc = (issue.services || [])[0];
+    return svc ? name + " in " + svc : name;
+  }
+  function isSymptom(issue) { return !!issue.causedBy && issue.causedBy.share >= SYMPTOM_MIN_SHARE; }
+  /** Opens another issue's detail: from the loaded list when it is there, else fetched. */
+  async function openIssue(fingerprint) {
+    let issue = allIssues.find((i) => i.fingerprint === fingerprint);
+    if (!issue) {
+      try {
+        issue = await api("/issues/" + encodeURIComponent(fingerprint));
+        if (issue.title) titles.set(issue.fingerprint, issue.title);
+        allIssues = allIssues.concat([issue]);
+      } catch (err) { setStatus("Couldn’t open that issue. " + err.message, true); return; }
+    }
+    showDetail(issue);
+  }
+  function issueLink(issue) {
+    const b = el("button", "link", issueLabel(issue));
+    b.type = "button";
+    b.addEventListener("click", (e) => { e.stopPropagation(); openIssue(issue.fingerprint); });
+    return b;
+  }
+
   function renderTable(list) {
     const body = $("issuesBody");
     body.textContent = "";
@@ -919,6 +958,12 @@
       if (titles.get(issue.fingerprint)) meta.appendChild(el("span", "mono", issue.fingerprint));
       meta.appendChild(el("span", null, "first seen " + ago(issue.firstSeen)));
       if (!isExactOf(issue)) meta.appendChild(el("span", "pill warning", "≈ estimate, ×" + weightOf(issue) + " weight"));
+      if (isSymptom(issue)) {
+        const cause = allIssues.find((i) => i.fingerprint === issue.causedBy.fingerprint) || { fingerprint: issue.causedBy.fingerprint };
+        const c = el("span", "caused-by", "↳ caused by " + issueLabel(cause) + " (" + pct(issue.causedBy.share) + ")");
+        c.title = "Most of the time this happens, another service failed first in the same request.";
+        meta.appendChild(c);
+      }
       idCell.appendChild(meta);
 
       const svc = el("td", "col-service");
@@ -956,7 +1001,7 @@
   async function showDetail(issue) {
     selectedFingerprint = issue.fingerprint;
     // Everything this detail loads, kept so "Copy issue" can put all of it in one report.
-    const state = { issue, exemplars: null, exemplarsError: "", trail: null };
+    const state = { issue, exemplars: null, exemplarsError: "", trail: null, causes: null };
     const detail = el("div", "detail");
     detail.setAttribute("role", "region");
     detailRow = el("tr", "detail-row");
@@ -999,6 +1044,11 @@
     fig("First seen", ago(issue.firstSeen), formatIST(issue.firstSeen));
     fig("Last seen", ago(issue.lastSeen), formatIST(issue.lastSeen));
     detail.appendChild(figs);
+
+    // Filled in once /causes answers; stays hidden when this issue has no links either way.
+    const causeBlock = el("section", "block");
+    causeBlock.hidden = true;
+    detail.appendChild(causeBlock);
 
     const dur = issue.duration || { p50: 0, p95: 0, p99: 0 };
     const durBlock = el("section", "block");
@@ -1082,6 +1132,13 @@
       copyToClipboard(buildIssueReport(state), copyAll);
     });
 
+    const causesLoaded = api("/issues/" + encodeURIComponent(issue.fingerprint) + "/causes")
+      .then((graph) => {
+        state.causes = graph;
+        if (selectedFingerprint === issue.fingerprint) renderCauses(causeBlock, graph);
+      })
+      .catch(() => { /* an older backend, or a failure: the block simply stays hidden */ });
+
     try {
       const data = await api("/issues/" + encodeURIComponent(issue.fingerprint) + "/exemplars");
       if (selectedFingerprint !== issue.fingerprint) return;
@@ -1102,8 +1159,48 @@
       evList.textContent = "";
       evList.appendChild(el("p", "muted", "Couldn’t load the example events. " + err.message));
     } finally {
+      await causesLoaded;
       finishLoading();
     }
+  }
+
+  /** The "Cause and effect" block: the root cause, what caused this issue, and what it caused. */
+  function renderCauses(block, graph) {
+    const causedBy = graph.causedBy || [];
+    const caused = graph.caused || [];
+    if (!graph.rootCause && causedBy.length === 0 && caused.length === 0) return;
+    block.textContent = "";
+    const h = el("h3", null, "Cause and effect");
+    h.appendChild(el("span", "muted", "across services"));
+    block.appendChild(h);
+
+    if (graph.rootCause) {
+      const box = el("div", "root-cause");
+      box.appendChild(el("span", "k", "Likely root cause"));
+      box.appendChild(issueLink(graph.rootCause.issue));
+      const hops = graph.rootCause.path.length - 1;
+      box.appendChild(el("span", "muted path", hops === 1
+        ? "This issue mostly happens right after it fails."
+        : "Reached through " + plural(hops - 1, "other issue") + " in between, each mostly caused by the next."));
+      block.appendChild(box);
+    }
+    const list = (title, entries, explain) => {
+      if (entries.length === 0) return;
+      block.appendChild(el("h4", null, title));
+      const ul = el("ul", "links");
+      for (const e of entries) {
+        const li = el("li");
+        li.appendChild(issueLink(e.issue));
+        const n = el("span", "muted", fmtNum(e.count) + " times · " + pct(e.share));
+        n.title = explain(e);
+        li.appendChild(n);
+        ul.appendChild(li);
+      }
+      block.appendChild(ul);
+    };
+    list("Caused by", causedBy, (e) => pct(e.share) + " of this issue’s events followed this failure in the same request.");
+    list("Led to", caused, (e) => pct(e.share) + " of that issue’s events followed this one in the same request.");
+    block.hidden = false;
   }
 
   /**
@@ -1136,6 +1233,16 @@
     const d = i.duration || {};
     out.push("- **Request duration:** median " + fmtNum(d.p50) + " ms, 95th percentile " + fmtNum(d.p95) + " ms, 99th percentile " + fmtNum(d.p99) + " ms");
     out.push("");
+
+    const g = state.causes;
+    if (g && (g.rootCause || (g.causedBy || []).length || (g.caused || []).length)) {
+      const name = (x) => issueLabel(x) + " (`" + x.fingerprint + "`)";
+      out.push("## Cause and effect across services");
+      if (g.rootCause) out.push("- **Likely root cause:** " + name(g.rootCause.issue));
+      for (const e of g.causedBy || []) out.push("- **Caused by:** " + name(e.issue) + " — " + fmtNum(e.count) + " times, " + pct(e.share) + " of this issue");
+      for (const e of g.caused || []) out.push("- **Led to:** " + name(e.issue) + " — " + fmtNum(e.count) + " times, " + pct(e.share) + " of that issue");
+      out.push("");
+    }
 
     out.push("## Where it happens");
     const eps = (i.topEndpoints && i.topEndpoints.top) || [];

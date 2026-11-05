@@ -715,8 +715,8 @@ export const ADMIN_PAGE_HTML = String.raw`<!doctype html>
       var hr = el("tr"); ["", "Documents", "On disk", "Indexes"].forEach(function (x, i) { hr.appendChild(el("th", i ? "num" : null, x)); });
       var th = el("thead"); th.appendChild(hr); t.appendChild(th);
       var tb = el("tbody");
-      [["Logs", "logs"], ["Issues", "issues"], ["Example events", "events"]].forEach(function (pair) {
-        var c = s.collections[pair[1]];
+      [["Logs", "logs"], ["Issues", "issues"], ["Example events", "events"], ["Cause links", "issue_links"]].forEach(function (pair) {
+        var c = s.collections[pair[1]]; if (!c) return;
         var r = el("tr"); r.appendChild(el("td", null, pair[0]));
         r.appendChild(el("td", "num", num(c.documents))); r.appendChild(el("td", "num", bytes(c.storageBytes))); r.appendChild(el("td", "num", bytes(c.indexBytes)));
         tb.appendChild(r);

@@ -35,6 +35,10 @@ later, and the theme switch offers System, Light and Dark.
   copyable stack trace, via `GET /issues/:fingerprint/exemplars`); and *What this request logged*,
   the log lines of the failing request. When that request went through several services, each line
   is labeled with its service. The raw issue JSON is in a collapsible "Raw JSON" section.
+- **Cause and effect** (`GET /issues/:fingerprint/causes`): when another service failed first in
+  the same requests, a symptom's row says *caused by …*, and its detail shows the likely root cause
+  (one click opens it), what caused this issue, and what it led to, each with a count and share.
+  Hidden for issues with no links, and against an older backend.
 - **Copy issue** copies everything above as one Markdown report, to paste into an AI coding agent
   or a ticket.
 - Every count shows whether it is exact or a sampled estimate (Appendix A's FIDELITY invariant:

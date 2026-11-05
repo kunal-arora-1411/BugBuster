@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
+import { CAUSE_FINGERPRINT_PATTERN, HEADER_CAUSE } from "@bugbusterhq/types";
 import { getCurrentContext, type BugBusterContext } from "./context.js";
 
 /**
@@ -112,7 +113,13 @@ export function instrumentFetch(options: InstrumentFetchOptions = {}): () => voi
     for (const [name, value] of Object.entries(extra)) {
       if (!headers.has(name)) headers.set(name, value);
     }
-    return original(input, { ...init, headers });
+    // Read the callee's answer in the caller's request context, captured now: the issue a
+    // failed call names becomes the cause of this request's later errors.
+    const ctx = getCurrentContext();
+    return original(input, { ...init, headers }).then((response) => {
+      noteDownstreamResponse(response, ctx);
+      return response;
+    });
   };
   wrapped[WRAPPED] = original;
   globalThis.fetch = wrapped;
@@ -120,4 +127,55 @@ export function instrumentFetch(options: InstrumentFetchOptions = {}): () => voi
   return () => {
     if (globalThis.fetch === wrapped) globalThis.fetch = original;
   };
+}
+
+/** A response's headers, from `fetch` (`Headers`), Node's `http`, axios, got, or a plain object. */
+export type ResponseHeadersLike =
+  { get(name: string): string | null | undefined } | Record<string, unknown>;
+
+function causeHeaderOf(headers: ResponseHeadersLike | undefined): string | undefined {
+  if (!headers) return undefined;
+  let value: unknown;
+  if (typeof (headers as { get?: unknown }).get === "function") {
+    try {
+      value = (headers as { get(name: string): unknown }).get(HEADER_CAUSE);
+    } catch {
+      return undefined;
+    }
+  } else {
+    const wanted = HEADER_CAUSE.toLowerCase();
+    for (const [name, v] of Object.entries(headers)) {
+      if (name.toLowerCase() === wanted) value = v;
+    }
+  }
+  if (Array.isArray(value)) value = value[0];
+  return typeof value === "string" && CAUSE_FINGERPRINT_PATTERN.test(value.trim())
+    ? value.trim()
+    : undefined;
+}
+
+/**
+ * Tells BugBuster how a call to another service went, so an error this request raises later is
+ * linked to the issue that service failed with (docs/architecture/root-cause-graph.md). `fetch`
+ * calls do this by themselves once `instrumentFetch()` is on; for axios, got or `http`:
+ *
+ *   const res = await axios.get(url, { headers: bb.traceHeaders(), validateStatus: () => true });
+ *   bb.noteDownstreamResponse(res);
+ *
+ * Only a 5xx carrying a well-formed `X-BB-Cause` counts; anything else is ignored, and a call
+ * outside a request does nothing. Never throws.
+ */
+export function noteDownstreamResponse(
+  response: { status?: number; statusCode?: number; headers?: ResponseHeadersLike },
+  ctx: BugBusterContext | undefined = getCurrentContext(),
+): void {
+  try {
+    if (!ctx || !response) return;
+    const status = response.status ?? response.statusCode;
+    if (typeof status !== "number" || status < 500) return;
+    const cause = causeHeaderOf(response.headers);
+    if (cause) ctx.downstreamCause = cause;
+  } catch {
+    // a hostile headers object must never break the caller's request
+  }
 }

@@ -280,6 +280,123 @@
         }
       }
     },
+    "/issues/{fingerprint}/causes": {
+      "get": {
+        "tags": [
+          "Issues"
+        ],
+        "operationId": "getIssueCauses",
+        "summary": "Get an issue's causes, effects and root cause",
+        "description": "Cause and effect across services. When a service answers another traced service with a 5xx, it names the issue it failed with (the `X-BB-Cause` response header), and the caller's later errors in that request are counted against it. `causedBy` lists the issues that failed first, downstream, when this one happened; `caused` the issues this one led to upstream; both strongest first, at most 20. `share` is how much of the effect a link explains (link count / effect count). `rootCause` follows the strongest cause while its share is at least 0.5, and is null when this issue is not a symptom of another.",
+        "parameters": [
+          {
+            "name": "fingerprint",
+            "in": "path",
+            "required": true,
+            "description": "The issue's fingerprint, as returned in `GET /issues`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The issue's neighbourhood in the cause graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "rootCause",
+                    "causedBy",
+                    "caused"
+                  ],
+                  "properties": {
+                    "rootCause": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "issue",
+                            "path"
+                          ],
+                          "properties": {
+                            "issue": {
+                              "$ref": "#/components/schemas/Issue"
+                            },
+                            "path": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Fingerprints walked, this issue first, the root last."
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "causedBy": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/CauseEntry"
+                      }
+                    },
+                    "caused": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/CauseEntry"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "invalid api key"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The organization has been disabled by an operator. Nothing to retry; ask them to enable it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "organization is disabled"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such fingerprint in your organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "not found"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/issues/{fingerprint}/exemplars": {
       "get": {
         "tags": [
@@ -2151,6 +2268,30 @@
                   "minLength": 1
                 },
                 "default": []
+              },
+              "causedBy": {
+                "type": "object",
+                "properties": {
+                  "fingerprint": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "share": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "required": [
+                  "fingerprint",
+                  "count",
+                  "share"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
@@ -2316,6 +2457,10 @@
               "stacktrace"
             ],
             "additionalProperties": false
+          },
+          "causedBy": {
+            "type": "string",
+            "minLength": 1
           }
         },
         "required": [
@@ -2329,6 +2474,28 @@
           "source"
         ],
         "additionalProperties": false
+      },
+      "CauseEntry": {
+        "type": "object",
+        "required": [
+          "issue",
+          "count",
+          "share"
+        ],
+        "properties": {
+          "issue": {
+            "$ref": "#/components/schemas/Issue"
+          },
+          "count": {
+            "type": "integer",
+            "description": "Occurrences of the effect after the cause."
+          },
+          "share": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
       },
       "LogEntry": {
         "description": "One application log line.",
@@ -2482,6 +2649,13 @@
                     "items": {
                       "type": "string",
                       "minLength": 1
+                    }
+                  },
+                  "causedBy": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
                     }
                   }
                 },
@@ -2647,6 +2821,10 @@
                       "stacktrace"
                     ],
                     "additionalProperties": false
+                  },
+                  "causedBy": {
+                    "type": "string",
+                    "minLength": 1
                   }
                 },
                 "required": [

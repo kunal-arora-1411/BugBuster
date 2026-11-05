@@ -9,6 +9,12 @@ export interface BugBusterContext {
   traceId: string;
   spanId: string;
   parentSpanId?: string;
+  /**
+   * The issue a downstream service last failed with during this request — its `X-BB-Cause`
+   * fingerprint (docs/architecture/root-cause-graph.md). Set by `noteDownstreamResponse`; every
+   * error captured in the request after that is linked to it.
+   */
+  downstreamCause?: string;
 }
 
 const storage = new AsyncLocalStorage<BugBusterContext>();
