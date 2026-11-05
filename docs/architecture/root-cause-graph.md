@@ -1,6 +1,6 @@
 # BugBuster — Root Cause Across Services
 
-Status: **design, targeting 0.4.0.** The code follows it section by section.
+Status: **built, for 0.4.0.** The code follows it section by section.
 
 ## 1. The problem
 

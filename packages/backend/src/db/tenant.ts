@@ -1,5 +1,6 @@
 import type { Db, MongoClient } from "mongodb";
 import { ensureIssuesIndexes } from "./collections/issues.js";
+import { ensureIssueLinksIndexes } from "./collections/issue-links.js";
 import { ensureEventsIndexes } from "./collections/events.js";
 import { ensureDeploysIndexes } from "./collections/deploys.js";
 import { ensureLogsIndexes, ensureRetentionIndex } from "./collections/logs.js";
@@ -39,6 +40,7 @@ export class TenantDbResolver {
     if (!this.ensuredIndexes.has(dbName)) {
       await Promise.all([
         ensureIssuesIndexes(db),
+        ensureIssueLinksIndexes(db),
         ensureEventsIndexes(db),
         ensureDeploysIndexes(db),
         ensureLogsIndexes(db, { retentionDays: this.retentionFor(org) }),

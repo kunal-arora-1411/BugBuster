@@ -353,6 +353,22 @@ services, in order, each labeled with its service. Two pieces, both in the SDK (
 `traceparent` is the standard OpenTelemetry uses, so traces also continue through services
 instrumented with it. Use `propagateTo` to keep trace ids from being sent to outside APIs.
 
+#### Which service caused it (0.4.0+)
+
+When the database times out in `inventory`, `orders` fails because inventory did, and `checkout`
+because orders did: three issues for one failure. With the same two pieces above in place, the
+dashboard says so — *caused by …* on each symptom's row, and a **Cause and effect** block on the
+issue with the likely root cause one click away. How it works without keeping every trace:
+
+- A service answering a **traced** caller with a 5xx adds `X-BB-Cause: <fingerprint>` to the
+  response: which issue it failed with. Browsers and outside clients send no `traceparent`, so they
+  never get it. Turn it off with `createExpressIntegration(client, { causeHeader: false })`.
+- An instrumented `fetch` reads that header, and every error the calling request captures after it
+  is counted against that issue — inside the SDK's fold, so 50,000 failures still cost one record.
+  For axios, got or `http`, report the response yourself: `bb.noteDownstreamResponse(res)`.
+
+Design: [`docs/architecture/root-cause-graph.md`](docs/architecture/root-cause-graph.md).
+
 ### 6. Application logs
 
 ```ts
@@ -537,6 +553,12 @@ growing. The backend accepts both old and new SDKs. It also follows one request 
 are W3C-style 32-hex ids instead of UUIDs. To upgrade a service with an AI coding agent, use
 [`docs/upgrade-to-0.3.md`](docs/upgrade-to-0.3.md).
 
+**0.4.0:** issues know which other service's issue caused them
+([Which service caused it](#which-service-caused-it-040)). Both new wire fields are optional, so
+any mix of old and new SDKs, Agents and backends keeps working; links appear once both sides of a
+call run 0.4.0. Synthetic `HandledHttpError`s (a 5xx nothing reported) now have a fixed stack, so
+each one starts a new issue once after the upgrade.
+
 ---
 
 ## Developing BugBuster locally
@@ -629,5 +651,7 @@ Why it's built this way — read before changing the core:
 - [`docs/architecture/bugbuster-blueprint.html`](docs/architecture/bugbuster-blueprint.html) — the
   same architecture as eight drawn plates (open in a browser).
 - [`docs/glossary.md`](docs/glossary.md) — plain-English definitions of every term used here.
+- [`docs/architecture/root-cause-graph.md`](docs/architecture/root-cause-graph.md) — finding the
+  root cause across services from folded data: the `X-BB-Cause` header and the issue graph.
 - [`docs/api.md`](docs/api.md) · [`docs/schema.md`](docs/schema.md) — the Query API and the
   MongoDB schema.

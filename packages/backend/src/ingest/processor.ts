@@ -9,6 +9,7 @@ import {
 } from "../db/collections/issues.js";
 import { insertExemplar } from "../db/collections/events.js";
 import { insertLogs } from "../db/collections/logs.js";
+import { recordCauseLinks } from "../db/collections/issue-links.js";
 
 /**
  * The one place the JSON parse happens (ingest-pipeline.md §8.1's v1 nuance — see edge.ts).
@@ -25,6 +26,8 @@ export interface ProcessResult {
   /** Log items that failed schema validation (or could not be serialized) and were discarded. */
   rejectedLogs: number;
   fingerprintsSeen: string[];
+  /** Cause -> effect pairs added to (root-cause-graph.md §5). */
+  processedLinks: number;
 }
 
 export async function processEnvelope(db: Db, rawBody: Buffer): Promise<ProcessResult> {
@@ -33,6 +36,7 @@ export async function processEnvelope(db: Db, rawBody: Buffer): Promise<ProcessR
   let processedFolds = 0;
   let processedExemplars = 0;
   let droppedExemplars = 0;
+  let processedLinks = 0;
   const validLogs: LogEntry[] = [];
   let rejectedLogs = 0;
 
@@ -69,6 +73,8 @@ export async function processEnvelope(db: Db, rawBody: Buffer): Promise<ProcessR
         fold.service ??
         fold.exemplars.map((id) => serviceOfEvent.get(id)).find((name) => name !== undefined);
       await upsertFoldDelta(db, service ? { ...fold, service } : fold);
+      // The fold's cause links (root-cause-graph.md §5), right after the fold they belong to.
+      processedLinks += await recordCauseLinks(db, fold.fingerprint, fold.causedBy);
       fingerprintsSeen.add(item.payload.fingerprint);
       processedFolds++;
     } else if (item.type === "exemplar") {
@@ -88,6 +94,7 @@ export async function processEnvelope(db: Db, rawBody: Buffer): Promise<ProcessR
     processedLogs: stored.inserted,
     rejectedLogs,
     fingerprintsSeen: [...fingerprintsSeen],
+    processedLinks,
   };
 }
 

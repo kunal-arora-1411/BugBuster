@@ -1,4 +1,4 @@
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   decodeEnvelopeItems,
@@ -8,7 +8,7 @@ import {
   type FoldDelta,
 } from "@bugbusterhq/types";
 import { init, type BugBusterClient } from "../../src/index.js";
-import { getCurrentContext, runWithContext } from "../../src/context.js";
+import { runWithContext, type BugBusterContext } from "../../src/context.js";
 import { createExpressIntegration } from "../../src/integrations/express.js";
 import { instrumentFetch, noteDownstreamResponse } from "../../src/trace-propagation.js";
 import { FoldTable } from "../../src/worker/fold.js";
@@ -34,7 +34,7 @@ function listen(server: Server): Promise<string> {
 const close = (server: Server) => new Promise<void>((resolve) => server.close(() => resolve()));
 
 describe("noteDownstreamResponse", () => {
-  const ctx = () => ({ traceId: TRACE, spanId: SPAN }) as ReturnType<typeof getCurrentContext> & {};
+  const ctx = (): BugBusterContext => ({ traceId: TRACE, spanId: SPAN });
 
   it("remembers the cause a 5xx names, from Headers or a plain object, any case", () => {
     const a = ctx();
@@ -185,7 +185,7 @@ describe("three services, one database timeout: the cause travels up the chain",
 
   async function serve(
     bb: ReturnType<typeof service>["bb"],
-    handler: (res: import("node:http").ServerResponse) => Promise<void> | void,
+    handler: (res: ServerResponse) => Promise<void> | void,
   ): Promise<string> {
     const server = createServer((req, res) =>
       bb.requestHandler(req, res, () => {

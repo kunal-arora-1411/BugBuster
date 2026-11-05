@@ -64,6 +64,7 @@ Lists the authenticated org's issues, most recently seen first.
       "adjustedCount": 1.0,
       "title": { "type": "TypeError", "message": "Cannot read properties of undefined" },
       "services": ["orders-api"],
+      "causedBy": { "fingerprint": "fp_3fa9c01d2b7e4410", "count": 2, "share": 1 },
       "fidelity": { "isExact": true, "adjustedCount": 1.0 }
     }
   ],
@@ -84,6 +85,12 @@ presented as unconditional truth (Appendix A's FIDELITY invariant).
 0.3.0), so it is normally one name: the same error in two services is two issues. Issues grouped by
 an older SDK can list several.
 
+`causedBy` is present when another service's issue is recorded as failing first in the same
+requests: its fingerprint, how many of this issue's events followed it, and `share` (that count
+over this issue's `count`). With a share of at least 0.5 the issue is a *symptom* of it; see
+[`GET /issues/:fingerprint/causes`](#get-issuesfingerprintcauses) and
+[`root-cause-graph.md`](architecture/root-cause-graph.md).
+
 ## `GET /issues/facets`
 
 `{ "services": ["billing-svc", "orders-api"] }` — every service any issue was seen in, sorted, for
@@ -95,6 +102,35 @@ One issue, same shape as an entry in the `/issues` list above. `404` if the fing
 exist **in the authenticated org's own database** — including when it exists in a *different*
 org's database, which is indistinguishable from "doesn't exist" by design (see the cross-org
 isolation test).
+
+## `GET /issues/:fingerprint/causes`
+
+Cause and effect across services ([`root-cause-graph.md`](architecture/root-cause-graph.md)).
+When a service answers another traced service with a 5xx, the SDK names the issue it failed with in
+an `X-BB-Cause` response header; the caller's errors later in that request are counted against it.
+
+**Response:**
+```json
+{
+  "rootCause": {
+    "issue": { "fingerprint": "fp_3fa9c01d2b7e4410", "title": { "type": "MongoTimeoutError", "message": "..." }, "...": "..." },
+    "path": ["fp_96970e51c831fc0f", "fp_f187a8e4506a61d6", "fp_3fa9c01d2b7e4410"]
+  },
+  "causedBy": [{ "issue": { "fingerprint": "fp_f187a8e4506a61d6", "...": "..." }, "count": 40, "share": 1 }],
+  "caused": []
+}
+```
+
+- `causedBy` — issues that failed first, downstream, when this one happened. `share` is how much
+  of **this** issue the link explains.
+- `caused` — issues this one led to upstream. `share` is how much of **that** issue it explains.
+- `rootCause` — from this issue, step to the strongest cause while that step's share is at least
+  0.5; stop at an issue with no such cause, on a cycle, or after 8 steps. `path` is every
+  fingerprint walked, this issue first. `null` when this issue is not a symptom of another.
+
+Both lists are strongest first, at most 20 each, and only name issues that exist in the
+authenticated org (a fingerprint heard from another org's service is never shown). Each `issue` is
+the same shape as an `/issues` entry. `404` under the same rule as `/issues/:fingerprint`.
 
 ## `GET /issues/:fingerprint/exemplars`
 

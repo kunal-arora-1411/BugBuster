@@ -23,6 +23,7 @@ import {
 import { getExemplarsByIds } from "./db/collections/events.js";
 import { decodeLogsCursor, getLogFacets, queryLogs, type LogQuery } from "./db/collections/logs.js";
 import { attachFidelity } from "./query/fidelity.js";
+import { getCauseGraph } from "./query/causes.js";
 import { orgStorageReport } from "./db/storage-report.js";
 import { countUnreferencedEvents, deleteUnreferencedEvents } from "./db/maintenance.js";
 import { ADMIN_PAGE_HTML } from "./admin-page.js";
@@ -636,6 +637,31 @@ export function registerRoutes(
     }
     await reply.send(attachFidelity(issue));
   });
+
+  // Cause and effect across services (docs/architecture/root-cause-graph.md §6): what caused this
+  // issue, what it caused, and the root cause the strongest causes lead to.
+  app.get<{ Params: { fingerprint: string } }>(
+    "/issues/:fingerprint/causes",
+    async (request, reply) => {
+      const org = await requireOrg(request, reply, controlDb);
+      if (!org) return;
+
+      const db = await tenants.forOrgDb(org.dbName, org);
+      const issue = await getIssue(db, request.params.fingerprint);
+      if (!issue) {
+        await reply.code(404).send({ error: "not found" });
+        return;
+      }
+      const graph = await getCauseGraph(db, issue);
+      await reply.send({
+        rootCause: graph.rootCause
+          ? { issue: attachFidelity(graph.rootCause.issue), path: graph.rootCause.path }
+          : null,
+        causedBy: graph.causedBy.map((e) => ({ ...e, issue: attachFidelity(e.issue) })),
+        caused: graph.caused.map((e) => ({ ...e, issue: attachFidelity(e.issue) })),
+      });
+    },
+  );
 
   // Resolves the exemplarRefs -> full BugBusterEvent bodies gap (docs/api.md's "Not yet built"):
   // the aggregate route intentionally never inlines full event payloads (they can be large, and

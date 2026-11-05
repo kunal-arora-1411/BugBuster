@@ -76,6 +76,28 @@ see `examples/demo-app/README.md`):
   error and retries once as a plain update — without this, that occurrence's count is silently
   lost under concurrent writers.
 
+## `issue_links` collection
+
+Cause and effect between issues ([`root-cause-graph.md`](architecture/root-cause-graph.md) §5):
+the edges of a graph whose nodes are `issues`.
+
+```text
+issue_links:
+  cause       string    <- fingerprint that failed first (the service that was called)
+  effect      string    <- fingerprint it caused (the service that called it)
+  count       number    <- occurrences of `effect` that followed a `cause` failure in one request
+  firstSeen   string
+  lastSeen    string
+
+  UNIQUE INDEX (cause, effect)   <- one atomic $inc upsert per pair, per fold delta
+  INDEX (effect, count desc)     <- "what caused this", strongest first
+  INDEX (cause, count desc)      <- "what did this cause"
+```
+
+Written from each fold delta's `causedBy`, right after the fold's own upsert. A self-link or a
+malformed fingerprint is never stored. A link may name a `cause` with no issue in this database
+(an `X-BB-Cause` heard from another org's service); reads drop those with a `$lookup` on `issues`.
+
 ## `events` collection
 
 Resolves an early gap between `doc.md`'s informal "BugBuster event model" sketch and the
