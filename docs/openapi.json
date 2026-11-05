@@ -34,6 +34,10 @@
       "description": "Operator-only: needs the backend's admin token."
     },
     {
+      "name": "Internal",
+      "description": "For schedulers: needs the backend's cron secret."
+    },
+    {
       "name": "Meta",
       "description": "This API description."
     }
@@ -262,6 +266,123 @@
           },
           "404": {
             "description": "No such fingerprint in your organization (also returned when it exists only in another organization).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "not found"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/issues/{fingerprint}/causes": {
+      "get": {
+        "tags": [
+          "Issues"
+        ],
+        "operationId": "getIssueCauses",
+        "summary": "Get an issue's causes, effects and root cause",
+        "description": "Cause and effect across services. When a service answers another traced service with a 5xx, it names the issue it failed with (the `X-BB-Cause` response header), and the caller's later errors in that request are counted against it. `causedBy` lists the issues that failed first, downstream, when this one happened; `caused` the issues this one led to upstream; both strongest first, at most 20. `share` is how much of the effect a link explains (link count / effect count). `rootCause` follows the strongest cause while its share is at least 0.5, and is null when this issue is not a symptom of another.",
+        "parameters": [
+          {
+            "name": "fingerprint",
+            "in": "path",
+            "required": true,
+            "description": "The issue's fingerprint, as returned in `GET /issues`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The issue's neighbourhood in the cause graph.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "rootCause",
+                    "causedBy",
+                    "caused"
+                  ],
+                  "properties": {
+                    "rootCause": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "required": [
+                            "issue",
+                            "path"
+                          ],
+                          "properties": {
+                            "issue": {
+                              "$ref": "#/components/schemas/Issue"
+                            },
+                            "path": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Fingerprints walked, this issue first, the root last."
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "causedBy": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/CauseEntry"
+                      }
+                    },
+                    "caused": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/CauseEntry"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "invalid api key"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The organization has been disabled by an operator. Nothing to retry; ask them to enable it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "organization is disabled"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such fingerprint in your organization.",
             "content": {
               "application/json": {
                 "schema": {
@@ -711,13 +832,30 @@
                 "schema": {
                   "type": "object",
                   "required": [
-                    "orgs"
+                    "orgs",
+                    "emailAlerts"
                   ],
                   "properties": {
                     "orgs": {
                       "type": "array",
                       "items": {
                         "$ref": "#/components/schemas/AdminOrg"
+                      }
+                    },
+                    "emailAlerts": {
+                      "type": "object",
+                      "required": [
+                        "configured"
+                      ],
+                      "description": "Whether this backend can send alert emails, and from where.",
+                      "properties": {
+                        "configured": {
+                          "type": "boolean"
+                        },
+                        "from": {
+                          "type": "string",
+                          "format": "email"
+                        }
                       }
                     }
                   }
@@ -1005,6 +1143,248 @@
                 },
                 "example": {
                   "error": "no such org"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/orgs/{orgId}/alerts": {
+      "put": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "setOrgAlerts",
+        "summary": "Set an organization's email alerts",
+        "description": "Replaces the organization's alert settings. When alerts are on, each recipient gets an email when one of the organization's services reports an error BugBuster hasn't seen before; new errors that arrive together share one email, and at most `BUGBUSTER_ALERTS_MAX_PER_HOUR` emails go out per hour (the rest wait and go together).\n\n- `services` / `environments`: only issues seen in one of these. Empty = all.\n- Switching alerts on starts from now: issues that appeared while they were off are not emailed.\n\nSettings can be saved before the backend is set up to send email (`emailAlerts.configured` in `GET /admin/orgs`); they apply once it is.",
+        "security": [
+          {
+            "adminToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "enabled"
+                ],
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "recipients": {
+                    "type": "array",
+                    "maxItems": 20,
+                    "items": {
+                      "type": "string",
+                      "format": "email"
+                    },
+                    "description": "Required (at least one) when `enabled` is true."
+                  },
+                  "services": {
+                    "type": "array",
+                    "maxItems": 50,
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "environments": {
+                    "type": "array",
+                    "maxItems": 50,
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "includeStack": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Whether emails include the top of the stack trace."
+                  }
+                }
+              },
+              "example": {
+                "enabled": true,
+                "recipients": [
+                  "dev@example.com"
+                ],
+                "environments": [
+                  "production"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The organization now.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOrg"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A value is invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "add at least one recipient to switch alerts on"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "invalid admin token"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organization, or admin routes are disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "no such org"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/orgs/{orgId}/alerts/test": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "testOrgAlerts",
+        "summary": "Send a test alert email",
+        "description": "Sends a test email to the organization's saved recipients.",
+        "security": [
+          {
+            "adminToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sent.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "sentTo"
+                  ],
+                  "properties": {
+                    "sentTo": {
+                      "type": "integer",
+                      "description": "Recipients emailed."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No recipients saved yet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "save at least one recipient first"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "invalid admin token"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such organization, or admin routes are disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "no such org"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This backend has no email provider configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "email alerts are not set up on this backend: set BUGBUSTER_BREVO_API_KEY and BUGBUSTER_ALERTS_FROM"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Brevo refused the email; the message says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Brevo refused the email (HTTP 401: Key not found)"
                 }
               }
             }
@@ -1399,6 +1779,166 @@
         }
       }
     },
+    "/internal/alerts/run": {
+      "get": {
+        "tags": [
+          "Internal"
+        ],
+        "operationId": "runAlerts",
+        "summary": "Send pending alert emails",
+        "description": "Sends every organization's pending alerts. Alerts normally go out right after the ingest that created the issue; this catches any that had to wait (the hourly cap, a failed send). For a scheduler: Vercel Cron (which calls it with `GET` and sends `CRON_SECRET`), GitHub Actions, cron-job.org. Off (404) unless `BUGBUSTER_CRON_SECRET` or `CRON_SECRET` is set.",
+        "security": [
+          {
+            "cronSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What was sent.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "configured",
+                    "orgs",
+                    "emails",
+                    "alerted",
+                    "errors"
+                  ],
+                  "properties": {
+                    "configured": {
+                      "type": "boolean",
+                      "description": "False when this backend can't send email; nothing was sent."
+                    },
+                    "orgs": {
+                      "type": "integer",
+                      "description": "Organizations with alerts on."
+                    },
+                    "emails": {
+                      "type": "integer"
+                    },
+                    "alerted": {
+                      "type": "integer",
+                      "description": "Issues those emails covered."
+                    },
+                    "errors": {
+                      "type": "integer",
+                      "description": "Organizations whose send failed."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong cron secret.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "invalid cron secret"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No cron secret is configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "not found"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Internal"
+        ],
+        "operationId": "runAlertsPost",
+        "summary": "Send pending alert emails",
+        "description": "Sends every organization's pending alerts. Alerts normally go out right after the ingest that created the issue; this catches any that had to wait (the hourly cap, a failed send). For a scheduler: Vercel Cron (which calls it with `GET` and sends `CRON_SECRET`), GitHub Actions, cron-job.org. Off (404) unless `BUGBUSTER_CRON_SECRET` or `CRON_SECRET` is set.",
+        "security": [
+          {
+            "cronSecret": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What was sent.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "configured",
+                    "orgs",
+                    "emails",
+                    "alerted",
+                    "errors"
+                  ],
+                  "properties": {
+                    "configured": {
+                      "type": "boolean",
+                      "description": "False when this backend can't send email; nothing was sent."
+                    },
+                    "orgs": {
+                      "type": "integer",
+                      "description": "Organizations with alerts on."
+                    },
+                    "emails": {
+                      "type": "integer"
+                    },
+                    "alerted": {
+                      "type": "integer",
+                      "description": "Issues those emails covered."
+                    },
+                    "errors": {
+                      "type": "integer",
+                      "description": "Organizations whose send failed."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong cron secret.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "invalid cron secret"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No cron secret is configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "not found"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin": {
       "get": {
         "tags": [
@@ -1550,6 +2090,11 @@
         "type": "http",
         "scheme": "bearer",
         "description": "The backend's BUGBUSTER_ADMIN_TOKEN. Only for admin routes."
+      },
+      "cronSecret": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The backend's BUGBUSTER_CRON_SECRET (or CRON_SECRET on Vercel)."
       },
       "bearerAuth": {
         "type": "http",
@@ -1715,6 +2260,38 @@
                   "minLength": 1
                 },
                 "default": []
+              },
+              "environments": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "default": []
+              },
+              "causedBy": {
+                "type": "object",
+                "properties": {
+                  "fingerprint": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "share": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "required": [
+                  "fingerprint",
+                  "count",
+                  "share"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
@@ -1880,6 +2457,10 @@
               "stacktrace"
             ],
             "additionalProperties": false
+          },
+          "causedBy": {
+            "type": "string",
+            "minLength": 1
           }
         },
         "required": [
@@ -1893,6 +2474,28 @@
           "source"
         ],
         "additionalProperties": false
+      },
+      "CauseEntry": {
+        "type": "object",
+        "required": [
+          "issue",
+          "count",
+          "share"
+        ],
+        "properties": {
+          "issue": {
+            "$ref": "#/components/schemas/Issue"
+          },
+          "count": {
+            "type": "integer",
+            "description": "Occurrences of the effect after the cause."
+          },
+          "share": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
       },
       "LogEntry": {
         "description": "One application log line.",
@@ -2046,6 +2649,13 @@
                     "items": {
                       "type": "string",
                       "minLength": 1
+                    }
+                  },
+                  "causedBy": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
                     }
                   }
                 },
@@ -2211,6 +2821,10 @@
                       "stacktrace"
                     ],
                     "additionalProperties": false
+                  },
+                  "causedBy": {
+                    "type": "string",
+                    "minLength": 1
                   }
                 },
                 "required": [
@@ -2472,7 +3086,8 @@
           "disabled",
           "logRetentionDays",
           "retentionOverridden",
-          "keys"
+          "keys",
+          "alerts"
         ],
         "properties": {
           "orgId": {
@@ -2508,6 +3123,69 @@
             "items": {
               "$ref": "#/components/schemas/ApiKeyInfo"
             }
+          },
+          "alerts": {
+            "$ref": "#/components/schemas/AdminOrgAlerts"
+          }
+        }
+      },
+      "AdminOrgAlerts": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "recipients",
+          "services",
+          "environments",
+          "includeStack",
+          "sentLastHour"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "recipients": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "email"
+            }
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Empty = all."
+          },
+          "environments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Empty = all."
+          },
+          "includeStack": {
+            "type": "boolean"
+          },
+          "since": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When alerts were switched on; older issues never alert."
+          },
+          "sentLastHour": {
+            "type": "integer"
+          },
+          "lastSentAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastError": {
+            "type": "string",
+            "description": "Why the last send failed, if it did."
+          },
+          "lastErrorAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },

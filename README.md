@@ -72,8 +72,18 @@ You need **Node.js ≥ 22.15** (the backend uses Node's built-in zstd) and a **M
 | `PORT` | `8080` | HTTP port (ignored on Vercel). |
 | `BUGBUSTER_LOG_RETENTION_DAYS` | `7` | Default days to keep log lines (TTL index on receive time). `0` = keep forever. Blank = default. Each org can override it; see [Storage](#storage). |
 | `BUGBUSTER_ADMIN_TOKEN` | unset | Enables `POST /admin/orgs` (create organizations and API keys over HTTP). At least 32 characters: generate one with `openssl rand -hex 32`. **Unset = the admin route doesn't exist (404).** |
+| `BUGBUSTER_BREVO_API_KEY` | unset | Turns on [email alerts](#email-alerts), sent through your Brevo account. Unset = no email is ever sent. |
+| `BUGBUSTER_ALERTS_FROM` | — | The sender address, verified in Brevo. Required with the Brevo key. |
+| `BUGBUSTER_ALERTS_FROM_NAME` | `BugBuster` | The sender name. |
+| `BUGBUSTER_DASHBOARD_URL` | unset | Where your dashboard is served, e.g. `https://dashboard.example.com`. Each alert then links straight to its issue. |
+| `BUGBUSTER_ALERTS_MAX_PER_HOUR` | `10` | Most alert emails one organization gets per hour. New errors past that wait and go out together. |
+| `BUGBUSTER_CRON_SECRET` | unset | At least 16 characters. Enables `/internal/alerts/run` for a scheduler. On Vercel you can set `CRON_SECRET` instead, which Vercel Cron sends by itself. |
 
-Keep the MongoDB URI and the admin token in your platform's secret settings, never in the repo. On
+A mistake in the alert settings (a missing or invalid sender, say) turns alerts off and logs why;
+it never stops the backend.
+
+Keep the MongoDB URI, the admin token and the Brevo key in your platform's secret settings, never
+in the repo. On
 Atlas, allowlist the backend's egress IPs (on Vercel that usually means `0.0.0.0/0` plus a strong
 database password).
 
@@ -158,6 +168,60 @@ BUGBUSTER_CONTROL_DB_URI="mongodb+srv://..." \
 **Upgrading from a backend without named keys:** nothing to do. On startup, each organization's
 existing key is copied in as "Original key" and keeps working, including on instances still running
 the old version during a rolling deploy.
+
+### Email alerts
+
+Each organization can get an email when its services report an error BugBuster hasn't seen before.
+Emails go out through **your Brevo account**, from an address you verify there; you choose who gets
+them, per organization, on the admin page.
+
+**Set up Brevo (once):**
+
+1. Create a [Brevo](https://www.brevo.com) account.
+2. Under **Senders, domains & dedicated IPs**, add the sender address alerts should come from and
+   verify it. Prefer an address on a domain you own (`alerts@yourdomain.com`), and authenticate the
+   domain there (Brevo gives you the DNS records). Mail "from" a `@gmail.com` address sent through
+   Brevo tends to land in spam.
+3. Under **SMTP & API → API keys**, create an API key.
+4. Set `BUGBUSTER_BREVO_API_KEY`, `BUGBUSTER_ALERTS_FROM` and, so emails link to the issue,
+   `BUGBUSTER_DASHBOARD_URL` on the backend, then restart or redeploy it.
+
+Brevo's free plan sends up to about 300 emails a day across your whole account. That is plenty for
+alerts (see the limits below), but every organization's alerts share it.
+
+**Turn alerts on for an organization:** open `/admin`, select the organization, and fill in
+**Email alerts**: tick *Send email alerts*, add recipients (up to 20; each gets their own copy),
+optionally limit it to some services or environments (most teams use `production`), **Save alerts**,
+then **Send test email** to check delivery.
+
+**What sends an email, and what doesn't:**
+
+- A **new issue**: an error BugBuster has never seen in that organization. New errors that arrive
+  together share one email, which lists up to ten of them.
+- An existing issue appearing in an environment or service it hadn't been seen in before. So with
+  alerts limited to `production`, an error first seen in staging alerts when it reaches production.
+- Not the same error happening again, and not issues from before alerts were switched on.
+- Not an error whose fingerprint changed only because a service upgraded its SDK (0.3 added the
+  service to fingerprints): an older issue with the same error, service and code location counts as
+  the same error.
+- At most `BUGBUSTER_ALERTS_MAX_PER_HOUR` emails per organization per hour (default 10). Past that,
+  new errors wait and go out together in the next email the hour allows.
+
+**When emails go out:** right after the ingest request that brought the new error. Ones that had to
+wait (the hourly cap, a failed send) go out on the next new error, or when a scheduler calls
+`/internal/alerts/run`:
+
+- A long-running Node backend also does this itself every minute.
+- On Vercel, `vercel.json` already has a Vercel Cron job that calls it once a day; set `CRON_SECRET`
+  in the project for it to work. For more often than daily, call it from any scheduler, for example
+  every 5 minutes from cron-job.org or a GitHub Actions schedule:
+
+  ```bash
+  curl -fsS https://bugbuster.example.com/internal/alerts/run -H "Authorization: Bearer $BUGBUSTER_CRON_SECRET"
+  ```
+
+The admin page shows each organization's last alert, how many went out in the last hour, and why the
+last attempt failed, if it did (Brevo's reason, such as an unverified sender).
 
 ### Storage
 
@@ -353,6 +417,25 @@ services, in order, each labeled with its service. Two pieces, both in the SDK (
 `traceparent` is the standard OpenTelemetry uses, so traces also continue through services
 instrumented with it. Use `propagateTo` to keep trace ids from being sent to outside APIs.
 
+#### Which service caused it (0.4.0+)
+
+When the database times out in `inventory`, `orders` fails because inventory did, and `checkout`
+because orders did: three issues for one failure. With the same two pieces above in place, the
+dashboard says so — *caused by …* on each symptom's row, and a **Cause and effect** block on the
+issue with the likely root cause one click away. How it works without keeping every trace:
+
+- A service answering a **traced** caller with a 5xx adds `X-BB-Cause: <fingerprint>` to the
+  response: which issue it failed with. Browsers and outside clients send no `traceparent`, so they
+  never get it. Turn it off with `createExpressIntegration(client, { causeHeader: false })`.
+- An instrumented `fetch` reads that header, and every error the calling request captures after it
+  is counted against that issue — inside the SDK's fold, so 50,000 failures still cost one record.
+  For axios, got or `http`, report the response yourself: `bb.noteDownstreamResponse(res)`.
+
+To see it with no app of your own, run three chained services against your backend:
+`BUGBUSTER_API_KEY=<key> node examples/root-cause-demo/traffic.mjs` (after `pnpm build`).
+
+Design: [`docs/architecture/root-cause-graph.md`](docs/architecture/root-cause-graph.md).
+
 ### 6. Application logs
 
 ```ts
@@ -488,6 +571,7 @@ backend's URL (it defaults to `http://localhost:8080`) and your **API key**.
   more than one service, a **Service** column and filter appear; the same error in two services is
   two issues. An issue opens under its row with the failing request's log lines (from every service
   it went through) and a **Copy issue** button that copies it all as one report for an AI agent.
+  `#issues/<fingerprint>` links straight to one issue, which is what alert emails use.
 - **Logs** — search, filter by level / service / environment / time, **Live** tail, and from any
   error example: *View logs for this request*.
 
@@ -536,6 +620,12 @@ growing. The backend accepts both old and new SDKs. It also follows one request 
 ([One request across several services](#one-request-across-several-services)), and new trace ids
 are W3C-style 32-hex ids instead of UUIDs. To upgrade a service with an AI coding agent, use
 [`docs/upgrade-to-0.3.md`](docs/upgrade-to-0.3.md).
+
+**0.4.0:** issues know which other service's issue caused them
+([Which service caused it](#which-service-caused-it-040)). Both new wire fields are optional, so
+any mix of old and new SDKs, Agents and backends keeps working; links appear once both sides of a
+call run 0.4.0. Synthetic `HandledHttpError`s (a 5xx nothing reported) now have a fixed stack, so
+each one starts a new issue once after the upgrade.
 
 ---
 
@@ -629,5 +719,7 @@ Why it's built this way — read before changing the core:
 - [`docs/architecture/bugbuster-blueprint.html`](docs/architecture/bugbuster-blueprint.html) — the
   same architecture as eight drawn plates (open in a browser).
 - [`docs/glossary.md`](docs/glossary.md) — plain-English definitions of every term used here.
+- [`docs/architecture/root-cause-graph.md`](docs/architecture/root-cause-graph.md) — finding the
+  root cause across services from folded data: the `X-BB-Cause` header and the issue graph.
 - [`docs/api.md`](docs/api.md) · [`docs/schema.md`](docs/schema.md) — the Query API and the
   MongoDB schema.

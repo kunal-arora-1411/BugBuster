@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { MongoClient } from "mongodb";
-import type { ApiKeyRecord, OrgRecord, ResolvedOrg } from "@bugbusterhq/types";
+import type { ApiKeyRecord, OrgAlerts, OrgRecord, ResolvedOrg } from "@bugbusterhq/types";
 
 /**
  * The shared control database (ingest-pipeline.md §8.4). Resolves an API key to
@@ -201,6 +201,87 @@ export class ControlDb {
       projection: { _id: 0, apiKeyHash: 0 },
     });
     return org ?? undefined;
+  }
+
+  /**
+   * Saves an org's email alert settings. Switching alerts on (from off, or for the first time)
+   * restarts `since`, so issues that appeared while they were off are not all sent at once.
+   */
+  async setAlerts(
+    orgId: string,
+    alerts: Omit<OrgAlerts, "since">,
+    now = new Date(),
+  ): Promise<PublicOrg | undefined> {
+    const current = await this.orgs().findOne({ orgId }, { projection: { alerts: 1 } });
+    if (!current) return undefined;
+    const turnedOn = alerts.enabled && !current.alerts?.enabled;
+    const since = turnedOn || !current.alerts ? now.toISOString() : current.alerts.since;
+    const org = await this.orgs().findOneAndUpdate(
+      { orgId },
+      { $set: { alerts: { ...alerts, since } } },
+      { returnDocument: "after", projection: { _id: 0, apiKeyHash: 0 } },
+    );
+    return org ?? undefined;
+  }
+
+  /** Orgs whose alerts are switched on and have someone to send to. */
+  async listOrgsWithAlerts(): Promise<PublicOrg[]> {
+    return this.orgs()
+      .find(
+        {
+          "alerts.enabled": true,
+          "alerts.recipients.0": { $exists: true },
+          disabled: { $ne: true },
+        },
+        { projection: { _id: 0, apiKeyHash: 0 } },
+      )
+      .toArray();
+  }
+
+  /**
+   * Takes the right to send this org's alerts for `leaseMs`, if no other process holds it. One
+   * conditional update, so two processes can never both get it. Undefined when it is held.
+   */
+  async claimAlertLease(
+    orgId: string,
+    leaseMs: number,
+    now = new Date(),
+  ): Promise<PublicOrg | undefined> {
+    const org = await this.orgs().findOneAndUpdate(
+      {
+        orgId,
+        $or: [
+          { "alertState.leaseUntil": { $exists: false } },
+          { "alertState.leaseUntil": { $lt: now.toISOString() } },
+        ],
+      },
+      { $set: { "alertState.leaseUntil": new Date(now.getTime() + leaseMs).toISOString() } },
+      { returnDocument: "after", projection: { _id: 0, apiKeyHash: 0 } },
+    );
+    return org ?? undefined;
+  }
+
+  /**
+   * Ends a send: releases the lease and records what happened. `sentAt` is the new list of sends
+   * within the last hour (the caller drops older ones); `error` is set when the send failed.
+   */
+  async finishAlertRun(
+    orgId: string,
+    result: { sentAt: string[]; sent: boolean; error?: string },
+    now = new Date(),
+  ): Promise<void> {
+    const at = now.toISOString();
+    const $set: Record<string, unknown> = { "alertState.sentAt": result.sentAt };
+    const $unset: Record<string, ""> = { "alertState.leaseUntil": "" };
+    if (result.error !== undefined) {
+      $set["alertState.lastError"] = result.error;
+      $set["alertState.lastErrorAt"] = at;
+    } else if (result.sent) {
+      $set["alertState.lastSentAt"] = at;
+      $unset["alertState.lastError"] = "";
+      $unset["alertState.lastErrorAt"] = "";
+    }
+    await this.orgs().updateOne({ orgId }, { $set, $unset });
   }
 
   /** Back-compat wrapper: sets or clears (null) an org's log retention. */

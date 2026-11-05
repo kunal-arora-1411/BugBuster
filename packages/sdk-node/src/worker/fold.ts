@@ -1,4 +1,4 @@
-import type { BugBusterEvent, FoldDelta } from "@bugbusterhq/types";
+import { MAX_CAUSES_PER_DELTA, type BugBusterEvent, type FoldDelta } from "@bugbusterhq/types";
 
 /**
  * The in-process fold table (ingest-pipeline.md §4). Groups occurrences by fingerprint within a
@@ -15,6 +15,8 @@ export interface FoldRecordInput {
   endpoint?: string;
   durationMs?: number;
   release?: string;
+  /** The issue another service failed with earlier in this occurrence's request, if any. */
+  causedBy?: string;
   event: BugBusterEvent; // exemplar candidate for this occurrence
 }
 
@@ -32,6 +34,8 @@ interface FoldEntry {
   slowestMs: number;
   novelStackEvent?: BugBusterEvent;
   perReleaseEvent: Map<string, BugBusterEvent>;
+  /** cause fingerprint -> occurrences in this window that followed it (root-cause-graph.md §3). */
+  causedBy: Map<string, number>;
 }
 
 const MAX_EXEMPLARS_PER_ISSUE = 6;
@@ -72,11 +76,13 @@ export class FoldTable {
         slowestMs: input.durationMs ?? -Infinity,
         novelStackEvent: input.isNewFingerprint ? input.event : undefined,
         perReleaseEvent: new Map(input.release ? [[input.release, input.event]] : []),
+        causedBy: new Map(input.causedBy ? [[input.causedBy, 1]] : []),
       });
       return;
     }
 
     existing.count++;
+    if (input.causedBy) countCause(existing.causedBy, input.causedBy);
     if (input.userId) existing.userIds.add(input.userId);
     if (input.endpoint) {
       existing.endpointCounts.set(
@@ -140,12 +146,20 @@ export class FoldTable {
         release: [...entry.releases][0],
         service: entry.service,
         exemplars: selectedExemplars.map((e) => e.eventId),
+        ...(entry.causedBy.size > 0 ? { causedBy: Object.fromEntries(entry.causedBy) } : {}),
       });
     }
 
     this.entries.clear();
     return { deltas, exemplars };
   }
+}
+
+/** Bounded like the table itself: past MAX_CAUSES_PER_DELTA distinct causes, new ones are not kept. */
+function countCause(causes: Map<string, number>, cause: string): void {
+  const current = causes.get(cause);
+  if (current !== undefined) causes.set(cause, current + 1);
+  else if (causes.size < MAX_CAUSES_PER_DELTA) causes.set(cause, 1);
 }
 
 function roleFor(evt: BugBusterEvent, entry: FoldEntry): BugBusterEvent["exemplarRole"] {

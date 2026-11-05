@@ -7,7 +7,7 @@ import { countUnreferencedEvents } from "./maintenance.js";
  * so reporting on an org that has never sent anything leaves its database untouched.
  */
 
-const COLLECTIONS = ["logs", "issues", "events"] as const;
+const COLLECTIONS = ["logs", "issues", "events", "issue_links"] as const;
 const DAYS = 7;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 

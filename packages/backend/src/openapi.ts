@@ -118,6 +118,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
       { name: "Logs", description: "Application log lines, stored one by one." },
       { name: "Ingest", description: "Where the SDK and Agent send data." },
       { name: "Admin", description: "Operator-only: needs the backend's admin token." },
+      { name: "Internal", description: "For schedulers: needs the backend's cron secret." },
       { name: "Meta", description: "This API description." },
     ],
     paths: {
@@ -199,6 +200,56 @@ export function buildOpenApiDocument(): Record<string, unknown> {
                 "another organization).",
               "not found",
             ),
+          },
+        },
+      },
+      "/issues/{fingerprint}/causes": {
+        get: {
+          tags: ["Issues"],
+          operationId: "getIssueCauses",
+          summary: "Get an issue's causes, effects and root cause",
+          description:
+            "Cause and effect across services. When a service answers another traced service " +
+            "with a 5xx, it names the issue it failed with (the `X-BB-Cause` response header), " +
+            "and the caller's later errors in that request are counted against it. `causedBy` " +
+            "lists the issues that failed first, downstream, when this one happened; `caused` " +
+            "the issues this one led to upstream; both strongest first, at most 20. `share` is " +
+            "how much of the effect a link explains (link count / effect count). `rootCause` " +
+            "follows the strongest cause while its share is at least 0.5, and is null when this " +
+            "issue is not a symptom of another.",
+          parameters: [fingerprintParam],
+          responses: {
+            "200": json(
+              {
+                type: "object",
+                required: ["rootCause", "causedBy", "caused"],
+                properties: {
+                  rootCause: {
+                    oneOf: [
+                      {
+                        type: "object",
+                        required: ["issue", "path"],
+                        properties: {
+                          issue: ref("Issue"),
+                          path: {
+                            type: "array",
+                            items: { type: "string" },
+                            description: "Fingerprints walked, this issue first, the root last.",
+                          },
+                        },
+                      },
+                      { type: "null" },
+                    ],
+                  },
+                  causedBy: { type: "array", items: ref("CauseEntry") },
+                  caused: { type: "array", items: ref("CauseEntry") },
+                },
+              },
+              "The issue's neighbourhood in the cause graph.",
+            ),
+            "401": unauthorized,
+            "403": orgDisabled,
+            "404": errorResponse("No such fingerprint in your organization.", "not found"),
           },
         },
       },
@@ -420,8 +471,19 @@ export function buildOpenApiDocument(): Record<string, unknown> {
             "200": json(
               {
                 type: "object",
-                required: ["orgs"],
-                properties: { orgs: { type: "array", items: ref("AdminOrg") } },
+                required: ["orgs", "emailAlerts"],
+                properties: {
+                  orgs: { type: "array", items: ref("AdminOrg") },
+                  emailAlerts: {
+                    type: "object",
+                    required: ["configured"],
+                    description: "Whether this backend can send alert emails, and from where.",
+                    properties: {
+                      configured: { type: "boolean" },
+                      from: { type: "string", format: "email" },
+                    },
+                  },
+                },
               },
               "The organizations, sorted by id.",
             ),
@@ -545,6 +607,103 @@ export function buildOpenApiDocument(): Record<string, unknown> {
             "404": errorResponse(
               "No such organization, or admin routes are disabled.",
               "no such org",
+            ),
+          },
+        },
+      },
+      "/admin/orgs/{orgId}/alerts": {
+        put: {
+          tags: ["Admin"],
+          operationId: "setOrgAlerts",
+          summary: "Set an organization's email alerts",
+          description:
+            "Replaces the organization's alert settings. When alerts are on, each recipient gets an " +
+            "email when one of the organization's services reports an error BugBuster hasn't seen " +
+            "before; new errors that arrive together share one email, and at most " +
+            "`BUGBUSTER_ALERTS_MAX_PER_HOUR` emails go out per hour (the rest wait and go together).\n\n" +
+            "- `services` / `environments`: only issues seen in one of these. Empty = all.\n" +
+            "- Switching alerts on starts from now: issues that appeared while they were off are " +
+            "not emailed.\n\n" +
+            "Settings can be saved before the backend is set up to send email " +
+            "(`emailAlerts.configured` in `GET /admin/orgs`); they apply once it is.",
+          security: [{ adminToken: [] }],
+          parameters: [orgIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["enabled"],
+                  properties: {
+                    enabled: { type: "boolean" },
+                    recipients: {
+                      type: "array",
+                      maxItems: 20,
+                      items: { type: "string", format: "email" },
+                      description: "Required (at least one) when `enabled` is true.",
+                    },
+                    services: { type: "array", maxItems: 50, items: { type: "string" } },
+                    environments: { type: "array", maxItems: 50, items: { type: "string" } },
+                    includeStack: {
+                      type: "boolean",
+                      default: true,
+                      description: "Whether emails include the top of the stack trace.",
+                    },
+                  },
+                },
+                example: {
+                  enabled: true,
+                  recipients: ["dev@example.com"],
+                  environments: ["production"],
+                },
+              },
+            },
+          },
+          responses: {
+            "200": json(ref("AdminOrg"), "The organization now."),
+            "400": errorResponse(
+              "A value is invalid.",
+              "add at least one recipient to switch alerts on",
+            ),
+            "401": adminUnauthorized,
+            "404": errorResponse(
+              "No such organization, or admin routes are disabled.",
+              "no such org",
+            ),
+          },
+        },
+      },
+      "/admin/orgs/{orgId}/alerts/test": {
+        post: {
+          tags: ["Admin"],
+          operationId: "testOrgAlerts",
+          summary: "Send a test alert email",
+          description: "Sends a test email to the organization's saved recipients.",
+          security: [{ adminToken: [] }],
+          parameters: [orgIdParam],
+          responses: {
+            "200": json(
+              {
+                type: "object",
+                required: ["sentTo"],
+                properties: { sentTo: { type: "integer", description: "Recipients emailed." } },
+              },
+              "Sent.",
+            ),
+            "400": errorResponse("No recipients saved yet.", "save at least one recipient first"),
+            "401": adminUnauthorized,
+            "404": errorResponse(
+              "No such organization, or admin routes are disabled.",
+              "no such org",
+            ),
+            "409": errorResponse(
+              "This backend has no email provider configured.",
+              "email alerts are not set up on this backend: set BUGBUSTER_BREVO_API_KEY and BUGBUSTER_ALERTS_FROM",
+            ),
+            "502": errorResponse(
+              "Brevo refused the email; the message says why.",
+              "Brevo refused the email (HTTP 401: Key not found)",
             ),
           },
         },
@@ -717,6 +876,74 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           },
         },
       },
+      "/internal/alerts/run": {
+        get: {
+          tags: ["Internal"],
+          operationId: "runAlerts",
+          summary: "Send pending alert emails",
+          description:
+            "Sends every organization's pending alerts. Alerts normally go out right after the " +
+            "ingest that created the issue; this catches any that had to wait (the hourly cap, a " +
+            "failed send). For a scheduler: Vercel Cron (which calls it with `GET` and sends " +
+            "`CRON_SECRET`), GitHub Actions, cron-job.org. Off (404) unless " +
+            "`BUGBUSTER_CRON_SECRET` or `CRON_SECRET` is set.",
+          security: [{ cronSecret: [] }],
+          responses: {
+            "200": json(
+              {
+                type: "object",
+                required: ["configured", "orgs", "emails", "alerted", "errors"],
+                properties: {
+                  configured: {
+                    type: "boolean",
+                    description: "False when this backend can't send email; nothing was sent.",
+                  },
+                  orgs: { type: "integer", description: "Organizations with alerts on." },
+                  emails: { type: "integer" },
+                  alerted: { type: "integer", description: "Issues those emails covered." },
+                  errors: { type: "integer", description: "Organizations whose send failed." },
+                },
+              },
+              "What was sent.",
+            ),
+            "401": errorResponse("Missing or wrong cron secret.", "invalid cron secret"),
+            "404": errorResponse("No cron secret is configured.", "not found"),
+          },
+        },
+        post: {
+          tags: ["Internal"],
+          operationId: "runAlertsPost",
+          summary: "Send pending alert emails",
+          description:
+            "Sends every organization's pending alerts. Alerts normally go out right after the " +
+            "ingest that created the issue; this catches any that had to wait (the hourly cap, a " +
+            "failed send). For a scheduler: Vercel Cron (which calls it with `GET` and sends " +
+            "`CRON_SECRET`), GitHub Actions, cron-job.org. Off (404) unless " +
+            "`BUGBUSTER_CRON_SECRET` or `CRON_SECRET` is set.",
+          security: [{ cronSecret: [] }],
+          responses: {
+            "200": json(
+              {
+                type: "object",
+                required: ["configured", "orgs", "emails", "alerted", "errors"],
+                properties: {
+                  configured: {
+                    type: "boolean",
+                    description: "False when this backend can't send email; nothing was sent.",
+                  },
+                  orgs: { type: "integer", description: "Organizations with alerts on." },
+                  emails: { type: "integer" },
+                  alerted: { type: "integer", description: "Issues those emails covered." },
+                  errors: { type: "integer", description: "Organizations whose send failed." },
+                },
+              },
+              "What was sent.",
+            ),
+            "401": errorResponse("Missing or wrong cron secret.", "invalid cron secret"),
+            "404": errorResponse("No cron secret is configured.", "not found"),
+          },
+        },
+      },
       "/admin": {
         get: {
           tags: ["Admin"],
@@ -797,6 +1024,11 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           scheme: "bearer",
           description: "The backend's BUGBUSTER_ADMIN_TOKEN. Only for admin routes.",
         },
+        cronSecret: {
+          type: "http",
+          scheme: "bearer",
+          description: "The backend's BUGBUSTER_CRON_SECRET (or CRON_SECRET on Vercel).",
+        },
         bearerAuth: {
           type: "http",
           scheme: "bearer",
@@ -835,6 +1067,15 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           description: "One complete example event (exemplar) kept for an issue.",
           ...schemaOf(BugBusterEventSchema),
         },
+        CauseEntry: {
+          type: "object",
+          required: ["issue", "count", "share"],
+          properties: {
+            issue: ref("Issue"),
+            count: { type: "integer", description: "Occurrences of the effect after the cause." },
+            share: { type: "number", minimum: 0, maximum: 1 },
+          },
+        },
         LogEntry: { description: "One application log line.", ...schemaOf(LogEntrySchema) },
         EnvelopeItem: {
           description: "One line of an ingest body.",
@@ -868,6 +1109,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
             "logRetentionDays",
             "retentionOverridden",
             "keys",
+            "alerts",
           ],
           properties: {
             orgId: { type: "string" },
@@ -882,6 +1124,38 @@ export function buildOpenApiDocument(): Record<string, unknown> {
               description: "False when the backend's default applies.",
             },
             keys: { type: "array", items: ref("ApiKeyInfo") },
+            alerts: ref("AdminOrgAlerts"),
+          },
+        },
+        AdminOrgAlerts: {
+          type: "object",
+          required: [
+            "enabled",
+            "recipients",
+            "services",
+            "environments",
+            "includeStack",
+            "sentLastHour",
+          ],
+          properties: {
+            enabled: { type: "boolean" },
+            recipients: { type: "array", items: { type: "string", format: "email" } },
+            services: { type: "array", items: { type: "string" }, description: "Empty = all." },
+            environments: {
+              type: "array",
+              items: { type: "string" },
+              description: "Empty = all.",
+            },
+            includeStack: { type: "boolean" },
+            since: {
+              type: "string",
+              format: "date-time",
+              description: "When alerts were switched on; older issues never alert.",
+            },
+            sentLastHour: { type: "integer" },
+            lastSentAt: { type: "string", format: "date-time" },
+            lastError: { type: "string", description: "Why the last send failed, if it did." },
+            lastErrorAt: { type: "string", format: "date-time" },
           },
         },
         StorageReport: {

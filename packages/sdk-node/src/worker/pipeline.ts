@@ -8,6 +8,12 @@ import type { FoldTable, FoldRecordInput } from "./fold.js";
 
 export interface PipelineDeps {
   foldTable: FoldTable;
+  /**
+   * Fingerprints already computed for an error while the request was still running (to name it
+   * in an X-BB-Cause response header — see fingerprintOfError). Reused here so that work is moved
+   * earlier, never done twice.
+   */
+  fingerprintCache?: WeakMap<Error, string>;
   seenFingerprints: Set<string>;
   /** Populated (not read) here — fingerprints that became new during THIS processing pass. */
   newFingerprintsThisFlush: Set<string>;
@@ -23,11 +29,13 @@ export interface PipelineDeps {
 export function processCapture(raw: RawCapture, deps: PipelineDeps): void {
   const frames = raw.error ? parseStack(raw.error.stack) : [];
   const errorType = raw.error?.name ?? (raw.kind === "message" ? "Message" : "Error");
-  const fingerprint = computeFingerprint({
-    errorType,
-    frames,
-    service: deps.serviceContext.name,
-  });
+  const fingerprint =
+    (raw.error ? deps.fingerprintCache?.get(raw.error) : undefined) ??
+    computeFingerprint({
+      errorType,
+      frames,
+      service: deps.serviceContext.name,
+    });
 
   const isNewFingerprint = !deps.seenFingerprints.has(fingerprint);
   if (isNewFingerprint) {
@@ -63,6 +71,7 @@ export function processCapture(raw: RawCapture, deps: PipelineDeps): void {
         : raw.message !== undefined
           ? { type: "Message", message: redactString(raw.message), stacktrace: "" }
           : undefined,
+    ...(raw.causedBy && raw.causedBy !== fingerprint ? { causedBy: raw.causedBy } : {}),
   };
 
   const input: FoldRecordInput = {
@@ -70,6 +79,28 @@ export function processCapture(raw: RawCapture, deps: PipelineDeps): void {
     isNewFingerprint,
     event,
     release: raw.release,
+    causedBy: event.causedBy,
   };
   deps.foldTable.record(input);
+}
+
+/**
+ * The fingerprint an error will be folded under, computed now and remembered in `cache` — for
+ * naming the error in an X-BB-Cause response header while its request is still being answered.
+ * Produces exactly what processCapture would (same parse, same material).
+ */
+export function fingerprintOfError(
+  error: Error,
+  service: string,
+  cache: WeakMap<Error, string>,
+): string {
+  const cached = cache.get(error);
+  if (cached !== undefined) return cached;
+  const fingerprint = computeFingerprint({
+    errorType: error.name ?? "Error",
+    frames: parseStack(error.stack),
+    service,
+  });
+  cache.set(error, fingerprint);
+  return fingerprint;
 }

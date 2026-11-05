@@ -165,6 +165,12 @@ export const ADMIN_PAGE_HTML = String.raw`<!doctype html>
   .field label { font-weight: 500; }
   .field .hint { font-size: 12px; color: var(--muted); }
   .field input, .field select { height: 36px; }
+  textarea { font: inherit; color: inherit; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--control); background: var(--sheet); min-width: 0; resize: vertical; line-height: 20px; }
+  textarea::placeholder { color: var(--muted); opacity: 1; }
+  .check { display: flex; gap: 8px; align-items: center; font-weight: 500; cursor: pointer; }
+  .check input { width: 16px; height: 16px; padding: 0; accent-color: var(--accent); cursor: pointer; }
+  .alert-state { font-size: 13px; color: var(--muted); }
+  .alert-state.err { color: var(--negative); }
   .keys { display: grid; }
   .key { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 10px 0; border-top: 1px solid var(--rule); align-items: center; }
   .key:first-child { border-top: none; padding-top: 0; }
@@ -361,6 +367,7 @@ export const ADMIN_PAGE_HTML = String.raw`<!doctype html>
   try { token = sessionStorage.getItem(TOKEN_KEY) || ""; } catch (e) {}
   var view = "orgs";
   var orgs = [];
+  var emailAlerts = { configured: false };
   var storageByOrg = {};
   var storageReport = null;
   var selectedOrg = null;
@@ -496,6 +503,7 @@ export const ADMIN_PAGE_HTML = String.raw`<!doctype html>
     status("orgsStatus", "Loading…");
     return api("GET", "/admin/orgs").then(function (data) {
       orgs = data.orgs || [];
+      emailAlerts = data.emailAlerts || { configured: false };
       status("orgsStatus", "");
       renderOrgs();
       if (selectedOrg) {
@@ -655,6 +663,8 @@ export const ADMIN_PAGE_HTML = String.raw`<!doctype html>
     keys.appendChild(form);
     d.appendChild(keys);
 
+    d.appendChild(alertsBlock(o));
+
     // Name
     var nameBlock = el("section", "block");
     nameBlock.appendChild(el("h3", null, "Name"));
@@ -705,8 +715,8 @@ export const ADMIN_PAGE_HTML = String.raw`<!doctype html>
       var hr = el("tr"); ["", "Documents", "On disk", "Indexes"].forEach(function (x, i) { hr.appendChild(el("th", i ? "num" : null, x)); });
       var th = el("thead"); th.appendChild(hr); t.appendChild(th);
       var tb = el("tbody");
-      [["Logs", "logs"], ["Issues", "issues"], ["Example events", "events"]].forEach(function (pair) {
-        var c = s.collections[pair[1]];
+      [["Logs", "logs"], ["Issues", "issues"], ["Example events", "events"], ["Cause links", "issue_links"]].forEach(function (pair) {
+        var c = s.collections[pair[1]]; if (!c) return;
         var r = el("tr"); r.appendChild(el("td", null, pair[0]));
         r.appendChild(el("td", "num", num(c.documents))); r.appendChild(el("td", "num", bytes(c.storageBytes))); r.appendChild(el("td", "num", bytes(c.indexBytes)));
         tb.appendChild(r);
@@ -743,6 +753,95 @@ export const ADMIN_PAGE_HTML = String.raw`<!doctype html>
     }
     d.appendChild(ab);
     if (window.matchMedia("(max-width: 1199px)").matches) d.scrollIntoView({ block: "start" });
+  }
+
+  /* ---- email alerts ---- */
+  function splitList(text, pattern) {
+    return text.split(pattern).map(function (x) { return x.trim(); }).filter(function (x) { return x.length > 0; });
+  }
+  function field(labelText, control, hintText) {
+    var f = el("div", "field");
+    var l = el("label", null, labelText); l.setAttribute("for", control.id);
+    f.append(l, control);
+    if (hintText) { var h = el("span", "hint", hintText); h.id = control.id + "Hint"; control.setAttribute("aria-describedby", h.id); f.appendChild(h); }
+    return f;
+  }
+  function checkbox(id, labelText, checked) {
+    var l = el("label", "check");
+    var c = el("input"); c.type = "checkbox"; c.id = id; c.checked = checked;
+    l.append(c, document.createTextNode(labelText));
+    return { label: l, input: c };
+  }
+  function alertsBlock(o) {
+    var a = o.alerts || { enabled: false, recipients: [], services: [], environments: [], includeStack: true, sentLastHour: 0 };
+    var b = el("section", "block");
+    b.appendChild(el("h3", null, "Email alerts"));
+    b.appendChild(el("p", "help", emailAlerts.configured
+      ? "An email from " + emailAlerts.from + " each time this organization’s services report an error BugBuster hasn’t seen before. New errors that arrive together share one email."
+      : "Email alerts aren’t set up on this backend yet: set BUGBUSTER_BREVO_API_KEY and BUGBUSTER_ALERTS_FROM, then restart or redeploy it. You can save these settings now; they apply once it is."));
+
+    var f = el("form"); f.noValidate = true; f.style.display = "grid"; f.style.gap = "12px";
+    var on = checkbox("alertsEnabled", "Send email alerts", a.enabled);
+    var rec = el("textarea"); rec.id = "alertsRecipients"; rec.rows = 3; rec.spellcheck = false; rec.autocomplete = "off";
+    rec.placeholder = "dev@example.com, oncall@example.com";
+    rec.value = a.recipients.join("\n");
+    var svc = el("input"); svc.id = "alertsServices"; svc.autocomplete = "off"; svc.spellcheck = false; svc.placeholder = "orders-api, billing…";
+    svc.value = a.services.join(", ");
+    var env = el("input"); env.id = "alertsEnvironments"; env.autocomplete = "off"; env.spellcheck = false; env.placeholder = "production…";
+    env.value = a.environments.join(", ");
+    var stack = checkbox("alertsStack", "Include the top of the stack trace", a.includeStack !== false);
+
+    var actions = el("div", "inline");
+    var save = el("button", null, "Save alerts"); save.type = "submit";
+    var test = el("button", null, "Send test email"); test.type = "button";
+    test.disabled = !emailAlerts.configured || a.recipients.length === 0;
+    test.title = !emailAlerts.configured ? "Email alerts aren’t set up on this backend" : (a.recipients.length === 0 ? "Save at least one recipient first" : "Sends a test email to the saved recipients");
+    var msg = el("span", "muted"); msg.id = "alertsMsg"; msg.setAttribute("role", "status");
+    actions.append(save, test, msg);
+
+    f.append(
+      on.label,
+      field("Recipients", rec, "Up to 20 addresses, separated by commas or new lines. Each person gets their own copy."),
+      field("Only these services", svc, "Comma-separated. Leave empty for every service."),
+      field("Only these environments", env, "Comma-separated. Leave empty for every environment; most teams use production."),
+      stack.label,
+      actions
+    );
+    b.appendChild(f);
+
+    var stateText = "";
+    var stateErr = false;
+    if (a.lastError) { stateText = "The last attempt failed " + ago(a.lastErrorAt) + ": " + a.lastError; stateErr = true; }
+    else if (a.lastSentAt) stateText = "Last alert sent " + ago(a.lastSentAt) + ".";
+    else if (a.enabled) stateText = "No alert sent yet.";
+    if (a.enabled && a.sentLastHour > 0) stateText += " " + plural(a.sentLastHour, "email") + " in the last hour.";
+    if (stateText) { var st = el("p", "alert-state" + (stateErr ? " err" : ""), stateText.trim()); b.appendChild(st); }
+
+    function done(text) {
+      // loadOrgs() rebuilds this section; the message goes on the new one.
+      return loadOrgs().then(function () { var m = $("alertsMsg"); if (m) m.textContent = text; });
+    }
+    f.addEventListener("submit", function (e) {
+      e.preventDefault();
+      msg.textContent = "";
+      save.disabled = true;
+      api("PUT", "/admin/orgs/" + encodeURIComponent(o.orgId) + "/alerts", {
+        enabled: on.input.checked,
+        recipients: splitList(rec.value, /[\s,;]+/),
+        services: splitList(svc.value, /,/),
+        environments: splitList(env.value, /,/),
+        includeStack: stack.input.checked
+      }).then(function () { return done("Saved."); })
+        .catch(function (x) { msg.textContent = x.message; }).finally(function () { save.disabled = false; });
+    });
+    test.addEventListener("click", function () {
+      msg.textContent = "Sending…";
+      test.disabled = true;
+      api("POST", "/admin/orgs/" + encodeURIComponent(o.orgId) + "/alerts/test").then(function (r) {
+        return done("Test email sent to " + plural(r.sentTo, "recipient") + ".");
+      }).catch(function (x) { msg.textContent = x.message; test.disabled = false; });
+    });
+    return b;
   }
 
   /* ---- new organization ---- */

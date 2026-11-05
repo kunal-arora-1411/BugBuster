@@ -67,5 +67,10 @@ export const BugBusterEventSchema = z.object({
   source: SourceLocationSchema,
   // Present when type === "exception"; a "message" or "span" event may omit it.
   error: ErrorDetailsSchema.optional(),
+  /**
+   * The issue another service failed with earlier in this request (its X-BB-Cause), when there
+   * was one — the evidence behind an issue's `causedBy` link.
+   */
+  causedBy: z.string().min(1).optional(),
 });
 export type BugBusterEvent = z.infer<typeof BugBusterEventSchema>;

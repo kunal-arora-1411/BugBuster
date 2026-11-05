@@ -9,6 +9,7 @@ import {
 } from "../db/collections/issues.js";
 import { insertExemplar } from "../db/collections/events.js";
 import { insertLogs } from "../db/collections/logs.js";
+import { recordCauseLinks } from "../db/collections/issue-links.js";
 
 /**
  * The one place the JSON parse happens (ingest-pipeline.md §8.1's v1 nuance — see edge.ts).
@@ -24,7 +25,14 @@ export interface ProcessResult {
   processedLogs: number;
   /** Log items that failed schema validation (or could not be serialized) and were discarded. */
   rejectedLogs: number;
+  /**
+   * Issues that may need an email alert now: created by this envelope (errors never seen before),
+   * or seen for the first time in another environment or service.
+   */
+  alertCandidates: number;
   fingerprintsSeen: string[];
+  /** Cause -> effect pairs added to (root-cause-graph.md §5). */
+  processedLinks: number;
 }
 
 export async function processEnvelope(db: Db, rawBody: Buffer): Promise<ProcessResult> {
@@ -33,6 +41,8 @@ export async function processEnvelope(db: Db, rawBody: Buffer): Promise<ProcessR
   let processedFolds = 0;
   let processedExemplars = 0;
   let droppedExemplars = 0;
+  let alertCandidates = 0;
+  let processedLinks = 0;
   const validLogs: LogEntry[] = [];
   let rejectedLogs = 0;
 
@@ -55,20 +65,29 @@ export async function processEnvelope(db: Db, rawBody: Buffer): Promise<ProcessR
   const stored = await insertLogs(db, validLogs);
   rejectedLogs += stored.rejected;
 
-  // Older SDKs send folds without the service; their example events in the same envelope carry it.
-  const serviceOfEvent = new Map<string, string>();
+  // Older SDKs send folds without the service, and no SDK sends the environment with a fold; the
+  // example events in the same envelope carry both.
+  const serviceOfEvent = new Map<string, { name: string; environment: string }>();
   for (const item of items) {
-    if (item.type === "exemplar")
-      serviceOfEvent.set(item.payload.eventId, item.payload.service.name);
+    if (item.type === "exemplar") serviceOfEvent.set(item.payload.eventId, item.payload.service);
   }
 
   for (const item of items) {
     if (item.type === "fold") {
       const fold = item.payload;
-      const service =
-        fold.service ??
-        fold.exemplars.map((id) => serviceOfEvent.get(id)).find((name) => name !== undefined);
-      await upsertFoldDelta(db, service ? { ...fold, service } : fold);
+      const seenIn = fold.exemplars
+        .map((id) => serviceOfEvent.get(id))
+        .filter((s) => s !== undefined);
+      const service = fold.service ?? seenIn[0]?.name;
+      const environments = [...new Set(seenIn.map((s) => s.environment))];
+      const { created, newPlace } = await upsertFoldDelta(
+        db,
+        service ? { ...fold, service } : fold,
+        { environments },
+      );
+      if (created || newPlace) alertCandidates++;
+      // The fold's cause links (root-cause-graph.md §5), right after the fold they belong to.
+      processedLinks += await recordCauseLinks(db, fold.fingerprint, fold.causedBy);
       fingerprintsSeen.add(item.payload.fingerprint);
       processedFolds++;
     } else if (item.type === "exemplar") {
@@ -87,7 +106,9 @@ export async function processEnvelope(db: Db, rawBody: Buffer): Promise<ProcessR
     droppedExemplars,
     processedLogs: stored.inserted,
     rejectedLogs,
+    alertCandidates,
     fingerprintsSeen: [...fingerprintsSeen],
+    processedLinks,
   };
 }
 

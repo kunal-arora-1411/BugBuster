@@ -1,4 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "pnpm install --frozen-lockfile && pnpm --filter @bugbusterhq/types run build"
+  "installCommand": "pnpm install --frozen-lockfile && pnpm --filter @bugbusterhq/types run build",
+  "crons": [{ "path": "/internal/alerts/run", "schedule": "0 3 * * *" }]
 }

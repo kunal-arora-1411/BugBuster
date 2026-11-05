@@ -64,6 +64,8 @@ Lists the authenticated org's issues, most recently seen first.
       "adjustedCount": 1.0,
       "title": { "type": "TypeError", "message": "Cannot read properties of undefined" },
       "services": ["orders-api"],
+      "environments": ["production"],
+      "causedBy": { "fingerprint": "fp_3fa9c01d2b7e4410", "count": 2, "share": 1 },
       "fidelity": { "isExact": true, "adjustedCount": 1.0 }
     }
   ],
@@ -84,6 +86,12 @@ presented as unconditional truth (Appendix A's FIDELITY invariant).
 0.3.0), so it is normally one name: the same error in two services is two issues. Issues grouped by
 an older SDK can list several.
 
+`causedBy` is present when another service's issue is recorded as failing first in the same
+requests: its fingerprint, how many of this issue's events followed it, and `share` (that count
+over this issue's `count`). With a share of at least 0.5 the issue is a *symptom* of it; see
+[`GET /issues/:fingerprint/causes`](#get-issuesfingerprintcauses) and
+[`root-cause-graph.md`](architecture/root-cause-graph.md).
+
 ## `GET /issues/facets`
 
 `{ "services": ["billing-svc", "orders-api"] }` — every service any issue was seen in, sorted, for
@@ -95,6 +103,35 @@ One issue, same shape as an entry in the `/issues` list above. `404` if the fing
 exist **in the authenticated org's own database** — including when it exists in a *different*
 org's database, which is indistinguishable from "doesn't exist" by design (see the cross-org
 isolation test).
+
+## `GET /issues/:fingerprint/causes`
+
+Cause and effect across services ([`root-cause-graph.md`](architecture/root-cause-graph.md)).
+When a service answers another traced service with a 5xx, the SDK names the issue it failed with in
+an `X-BB-Cause` response header; the caller's errors later in that request are counted against it.
+
+**Response:**
+```json
+{
+  "rootCause": {
+    "issue": { "fingerprint": "fp_3fa9c01d2b7e4410", "title": { "type": "MongoTimeoutError", "message": "..." }, "...": "..." },
+    "path": ["fp_96970e51c831fc0f", "fp_f187a8e4506a61d6", "fp_3fa9c01d2b7e4410"]
+  },
+  "causedBy": [{ "issue": { "fingerprint": "fp_f187a8e4506a61d6", "...": "..." }, "count": 40, "share": 1 }],
+  "caused": []
+}
+```
+
+- `causedBy` — issues that failed first, downstream, when this one happened. `share` is how much
+  of **this** issue the link explains.
+- `caused` — issues this one led to upstream. `share` is how much of **that** issue it explains.
+- `rootCause` — from this issue, step to the strongest cause while that step's share is at least
+  0.5; stop at an issue with no such cause, on a cycle, or after 8 steps. `path` is every
+  fingerprint walked, this issue first. `null` when this issue is not a symptom of another.
+
+Both lists are strongest first, at most 20 each, and only name issues that exist in the
+authenticated org (a fingerprint heard from another org's service is never shown). Each `issue` is
+the same shape as an `/issues` entry. `404` under the same rule as `/issues/:fingerprint`.
 
 ## `GET /issues/:fingerprint/exemplars`
 
@@ -234,9 +271,18 @@ their dates, never the key or its hash.
   "createdAt": "2026-10-01T09:00:00.000Z", "disabled": false,
   "logRetentionDays": 30, "retentionOverridden": true,
   "keys": [{ "keyId": "key_3f9a1c2d4e5b", "orgId": "acme", "name": "checkout-api production",
-             "createdAt": "2026-10-01T09:00:00.000Z", "lastUsedAt": "2026-11-03T08:12:00.000Z" }]
-}] }
+             "createdAt": "2026-10-01T09:00:00.000Z", "lastUsedAt": "2026-11-03T08:12:00.000Z" }],
+  "alerts": { "enabled": true, "recipients": ["dev@acme.com"], "services": [],
+              "environments": ["production"], "includeStack": true,
+              "since": "2026-11-05T09:00:00.000Z", "sentLastHour": 1,
+              "lastSentAt": "2026-11-05T09:41:12.000Z" }
+}],
+  "emailAlerts": { "configured": true, "from": "alerts@yourdomain.com" } }
 ```
+
+`emailAlerts.configured` is false when the backend has no Brevo key: alert settings can still be
+saved, and apply once it does. `alerts.lastError` (with `lastErrorAt`) says why the last send
+failed, if it did.
 
 ## `PATCH /admin/orgs/:orgId`
 
@@ -251,6 +297,41 @@ Changes an org. Admin token, as above. Send one or more of:
 
 **`200`:** the org, in the `GET /admin/orgs` shape · **`400`** nothing to change, or an invalid
 value · **`401`** wrong admin token · **`404`** no such org, or admin disabled.
+
+## `PUT /admin/orgs/:orgId/alerts`
+
+Sets an org's email alerts (replacing the previous setting). Admin token.
+
+```json
+{ "enabled": true, "recipients": ["dev@acme.com", "oncall@acme.com"],
+  "services": [], "environments": ["production"], "includeStack": true }
+```
+
+- `recipients`: up to 20 addresses, at least one when `enabled`. Each gets their own copy.
+- `services` / `environments`: only issues seen in one of these; empty or absent = all.
+- `includeStack` (default `true`): whether emails include the top of the stack trace.
+
+Switching alerts on starts from now: issues that appeared while they were off are not emailed.
+What sends an email is described in the README's [Email alerts](../README.md#email-alerts).
+
+**`200`:** the org, in the `GET /admin/orgs` shape · **`400`** an invalid value · **`401`** wrong
+admin token · **`404`** no such org, or admin disabled.
+
+## `POST /admin/orgs/:orgId/alerts/test`
+
+Sends a test email to the org's saved recipients. **`200`** `{ "sentTo": 2 }` · **`400`** no
+recipients saved · **`409`** the backend has no Brevo key · **`502`** Brevo refused the email; the
+error says why (for example an unverified sender).
+
+## `GET` or `POST /internal/alerts/run`
+
+For a scheduler. Sends every org's pending alerts: ones that waited for the hourly cap, or whose
+send failed. Needs `Authorization: Bearer <BUGBUSTER_CRON_SECRET>` (or Vercel's `CRON_SECRET`,
+which Vercel Cron sends with its `GET`); **`404`** when neither is set, **`401`** when it's wrong.
+
+```json
+{ "configured": true, "orgs": 3, "emails": 1, "alerted": 2, "errors": 0 }
+```
 
 ## `POST /admin/orgs/:orgId/keys` and `DELETE /admin/orgs/:orgId/keys/:keyId`
 
@@ -311,3 +392,6 @@ them.
   changed and when, but not who changed it.
 - Read-only keys. Every org key can both send and read, so a developer with a dashboard key could
   also send data.
+- More alert kinds: a resolved issue coming back, a sudden spike in a known issue, and daily
+  digests. Today an email means a new issue, or one newly seen in an environment or service.
+- Teams managing their own alert recipients. Recipients are set by the operator on `/admin`.

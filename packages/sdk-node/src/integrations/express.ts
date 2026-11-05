@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { format } from "node:util";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { LogLevel } from "@bugbusterhq/types";
+import { HEADER_CAUSE, type LogLevel } from "@bugbusterhq/types";
 import type { CaptureEngine } from "../capture.js";
 import { runWithContext } from "../context.js";
 import { createLogApi, type LogApi, type LogFields } from "../logger.js";
@@ -9,6 +9,7 @@ import {
   instrumentFetch,
   newSpanId,
   newTraceId,
+  noteDownstreamResponse,
   traceFromHeaders,
   traceHeaders,
   type InstrumentFetchOptions,
@@ -25,6 +26,8 @@ import {
 
 interface RequestState {
   captured: boolean;
+  /** The first Error captured in this request: the one an X-BB-Cause response header names. */
+  firstError?: Error;
 }
 
 // Deliberately separate from context.ts's trace-context AsyncLocalStorage: this one tracks
@@ -33,9 +36,11 @@ interface RequestState {
 const requestState = new AsyncLocalStorage<RequestState>();
 
 /** Marks the current request (if any) as having had something captured. */
-function markCaptured(): void {
+function markCaptured(error?: unknown): void {
   const state = requestState.getStore();
-  if (state) state.captured = true;
+  if (!state) return;
+  state.captured = true;
+  if (!state.firstError && error instanceof Error) state.firstError = error;
 }
 
 /**
@@ -44,13 +49,19 @@ function markCaptured(): void {
  * become no-ops for it.
  */
 export type IntegrationClient = Pick<CaptureEngine, "captureException" | "captureMessage"> &
-  Partial<Pick<CaptureEngine, "captureLog" | "isLogLevelEnabled">>;
+  Partial<Pick<CaptureEngine, "captureLog" | "isLogLevelEnabled">> & {
+    /**
+     * The fingerprint an error will be grouped under (a client from `init()` has it). Without it,
+     * 5xx responses carry no X-BB-Cause header and nothing else changes.
+     */
+    fingerprintOf?: (error: Error) => string | undefined;
+  };
 
 /** Wraps a client so every manual capture call also marks the current request captured. */
 function trackingClient(client: IntegrationClient): CaptureEngine {
   return {
     captureException(error, extra) {
-      markCaptured();
+      markCaptured(error);
       client.captureException(error, extra);
     },
     captureMessage(message, extra) {
@@ -92,6 +103,13 @@ export interface ExpressIntegrationOptions {
    * Pass `{ ignorePaths: ["/healthz"] }` to skip noisy probe endpoints.
    */
   logRequests?: boolean | { ignorePaths?: readonly string[] };
+  /**
+   * On a 5xx answered to another traced service (the request carried a `traceparent`), add an
+   * `X-BB-Cause` response header naming the issue this request failed with, so the caller's
+   * errors are linked to it (docs/architecture/root-cause-graph.md). Default true. Browsers and
+   * outside clients send no `traceparent`, so they never see it either way.
+   */
+  causeHeader?: boolean;
 }
 
 export interface InstrumentConsoleOptions {
@@ -139,6 +157,12 @@ export interface BugBusterExpressIntegration extends CaptureEngine {
    * carries its trace to the service it calls. Returns a restore function.
    */
   instrumentFetch: (options?: InstrumentFetchOptions) => () => void;
+  /**
+   * For HTTP clients other than an instrumented `fetch`: report a downstream call's response, so
+   * the issue that service failed with becomes the cause of this request's later errors.
+   * `bb.noteDownstreamResponse(axiosResponse)`. A no-op unless it is a 5xx with an X-BB-Cause.
+   */
+  noteDownstreamResponse: typeof noteDownstreamResponse;
 }
 
 const CONSOLE_LOG_LEVELS = {
@@ -148,6 +172,20 @@ const CONSOLE_LOG_LEVELS = {
   warn: "warn",
   error: "error",
 } as const satisfies Record<string, LogLevel>;
+
+/**
+ * The error recorded for a 5xx nothing else reported. Its stack is fixed rather than captured:
+ * a captured one depends on where it was built (in the response's `finish` listener, or while
+ * the headers are written, under the app's own route handler) and on this file's line numbers,
+ * so the same failing route would get a different fingerprint per call site and per SDK version.
+ * Grouping comes from the name (method + route), which is what the issue is about.
+ */
+function handledHttpError(status: number, method: string, route: string): Error {
+  const error = new Error(`HTTP ${status}: ${method} ${route}`);
+  error.name = `HandledHttpError:${method}:${route}`;
+  error.stack = `${error.name}: ${error.message}\n    at respond (bugbuster/express:1:1)`;
+  return error;
+}
 
 function statusToLevel(status: number): LogLevel {
   if (status >= 500) return "error";
@@ -160,6 +198,7 @@ export function createExpressIntegration(
   options: ExpressIntegrationOptions = {},
 ): BugBusterExpressIntegration {
   const tracked = trackingClient(client);
+  const causeHeader = options.causeHeader !== false && typeof client.fingerprintOf === "function";
 
   const requestLogOption = options.logRequests;
   const logRequests = requestLogOption === true || typeof requestLogOption === "object";
@@ -209,18 +248,41 @@ export function createExpressIntegration(
     };
     const startedAt = process.hrtime.bigint();
 
+    const reportUnreported5xx = (status: number): void => {
+      if (state.captured) return;
+      const route = typeof req.route?.path === "string" ? req.route.path : "<unmatched>";
+      // Grouped by error type (fingerprint.ts) — the route/method in the name keeps otherwise-
+      // identical HandledHttpErrors from colliding into one issue.
+      requestState.run(state, () =>
+        tracked.captureException(handledHttpError(status, req.method ?? "?", route)),
+      );
+    };
+
+    // Cause propagation (root-cause-graph.md §3): only to a caller that is itself traced.
+    if (causeHeader && fromCaller) {
+      const originalWriteHead = res.writeHead;
+      res.writeHead = function (this: ServerResponse, ...args: unknown[]) {
+        const status = typeof args[0] === "number" ? args[0] : res.statusCode;
+        // A raw header array passed to writeHead can't be merged with setHeader; leave those be.
+        if (status >= 500 && !res.headersSent && !args.some(Array.isArray)) {
+          try {
+            runWithContext(context, () => reportUnreported5xx(status));
+            const fingerprint = state.firstError && client.fingerprintOf?.(state.firstError);
+            if (fingerprint && !res.hasHeader(HEADER_CAUSE))
+              res.setHeader(HEADER_CAUSE, fingerprint);
+          } catch {
+            // never let telemetry break the response
+          }
+        }
+        return (originalWriteHead as (...a: unknown[]) => ServerResponse).apply(this, args);
+      } as typeof res.writeHead;
+    }
+
     res.once("finish", () => {
       // `finish` listeners run in the emitter's async context, not where they were registered —
       // so the trace context is re-established explicitly for everything emitted from here.
       runWithContext(context, () => {
-        if (res.statusCode >= 500 && !state.captured) {
-          const route = typeof req.route?.path === "string" ? req.route.path : "<unmatched>";
-          const error = new Error(`HTTP ${res.statusCode}: ${req.method ?? "?"} ${route}`);
-          // Grouped by error type + stack (fingerprint.ts) — the route/method distinguishes
-          // otherwise-identical HandledHttpErrors from colliding into one issue.
-          error.name = `HandledHttpError:${req.method ?? "?"}:${route}`;
-          tracked.captureException(error);
-        }
+        if (res.statusCode >= 500) reportUnreported5xx(res.statusCode);
         if (logRequests) logFinishedRequest(req, res, startedAt);
       });
     });
@@ -299,5 +361,6 @@ export function createExpressIntegration(
     instrumentConsole,
     traceHeaders: () => traceHeaders(),
     instrumentFetch,
+    noteDownstreamResponse,
   };
 }

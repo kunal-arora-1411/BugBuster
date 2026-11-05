@@ -98,10 +98,16 @@ export function createCaptureEngine(deps: CaptureEngineDeps): CaptureEngine {
       }
 
       const target = kind === "log" ? logRing : deps.ring;
+      const context = getCurrentContext();
       const raw: RawCapture = {
         kind,
         ...payload,
-        context: getCurrentContext(),
+        context,
+        // Read now, not at flush: a later downstream failure in the same request must not be
+        // credited with causing an error that happened before it.
+        ...(kind !== "log" && context?.downstreamCause
+          ? { causedBy: context.downstreamCause }
+          : {}),
         timestampMs: Date.now(),
         release: extra?.release,
         environment: extra?.environment,
