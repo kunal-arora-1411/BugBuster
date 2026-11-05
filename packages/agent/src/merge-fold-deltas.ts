@@ -1,4 +1,4 @@
-import type { FoldDelta } from "@bugbusterhq/types";
+import { MAX_CAUSES_PER_DELTA, type FoldDelta } from "@bugbusterhq/types";
 
 /**
  * Cross-process folding (ingest-pipeline.md §6.2) — the Agent's actual reason to exist. Multiple
@@ -18,7 +18,12 @@ export function mergeFoldDeltas(deltas: readonly FoldDelta[]): FoldDelta[] {
   for (const delta of deltas) {
     const existing = byFingerprint.get(delta.fingerprint);
     if (!existing) {
-      byFingerprint.set(delta.fingerprint, { ...delta, userIds: [...delta.userIds] });
+      byFingerprint.set(delta.fingerprint, {
+        ...delta,
+        userIds: [...delta.userIds],
+        endpointCounts: { ...delta.endpointCounts },
+        ...(delta.causedBy ? { causedBy: { ...delta.causedBy } } : {}),
+      });
       continue;
     }
 
@@ -33,6 +38,16 @@ export function mergeFoldDeltas(deltas: readonly FoldDelta[]): FoldDelta[] {
 
     for (const [endpoint, count] of Object.entries(delta.endpointCounts)) {
       existing.endpointCounts[endpoint] = (existing.endpointCounts[endpoint] ?? 0) + count;
+    }
+
+    // Cause links (root-cause-graph.md §3) sum like counts, under the same per-delta cap the SDK
+    // applies, so a merged record never carries more causes than one SDK's would.
+    if (delta.causedBy) {
+      const causes = (existing.causedBy ??= {});
+      for (const [cause, count] of Object.entries(delta.causedBy)) {
+        if (Object.hasOwn(causes, cause)) causes[cause] = (causes[cause] ?? 0) + count;
+        else if (Object.keys(causes).length < MAX_CAUSES_PER_DELTA) causes[cause] = count;
+      }
     }
   }
 

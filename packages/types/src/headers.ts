@@ -38,3 +38,13 @@ export const DirectivesSchema = z.object({
   configVersion: z.number().int().nonnegative(),
 });
 export type Directives = z.infer<typeof DirectivesSchema>;
+
+/**
+ * Cause propagation (docs/architecture/root-cause-graph.md): a 5xx response from an instrumented
+ * service to a traced caller names the issue it failed with, so the caller can link its own
+ * errors to it. Value: a fingerprint (`CAUSE_FINGERPRINT_PATTERN`).
+ */
+export const HEADER_CAUSE = "X-BB-Cause";
+
+/** What a fingerprint looks like on the wire; anything else in X-BB-Cause is ignored. */
+export const CAUSE_FINGERPRINT_PATTERN = /^fp_[0-9a-f]{16}$/;

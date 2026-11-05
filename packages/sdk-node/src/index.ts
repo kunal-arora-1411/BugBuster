@@ -7,7 +7,7 @@ import { createDropCounters } from "./drop-counters.js";
 import { createCaptureEngine, type CaptureEngine } from "./capture.js";
 import type { RawCapture } from "./raw-capture.js";
 import { FoldTable } from "./worker/fold.js";
-import { processCapture } from "./worker/pipeline.js";
+import { fingerprintOfError, processCapture } from "./worker/pipeline.js";
 import { buildLogEntry } from "./worker/log.js";
 import { buildEnvelope, encodeEnvelope, splitLogsIntoBatches } from "./worker/serialize.js";
 import { createLogApi, type LogApi } from "./logger.js";
@@ -23,9 +23,11 @@ export {
   instrumentFetch,
   newSpanId,
   newTraceId,
+  noteDownstreamResponse,
   traceFromHeaders,
   traceHeaders,
   type InstrumentFetchOptions,
+  type ResponseHeadersLike,
 } from "./trace-propagation.js";
 export { FoldTable } from "./worker/fold.js";
 export { computeFingerprint, computeCoarsenedFingerprint } from "./worker/fingerprint.js";
@@ -53,6 +55,11 @@ export interface BugBusterClient extends CaptureEngine {
    * searchable in the dashboard's Logs view. Sugar over `captureLog`.
    */
   log: LogApi;
+  /**
+   * The fingerprint `error` is grouped under in this service — what an X-BB-Cause response
+   * header carries (docs/architecture/root-cause-graph.md). Undefined if it can't be computed.
+   */
+  fingerprintOf(error: Error): string | undefined;
   /** Forces an immediate flush of everything currently held, bounded by shutdownFlushTimeoutMs. */
   shutdown(): Promise<void>;
 }
@@ -69,6 +76,8 @@ export function init(rawConfig: unknown): BugBusterClient {
   const foldTable = new FoldTable(config.maxLiveFingerprints);
   const seenFingerprints = new Set<string>();
   const suppression = new SuppressionState();
+  // Errors fingerprinted early, to name them in a response header; the flush reuses the result.
+  const fingerprintCache = new WeakMap<Error, string>();
 
   const serviceContext: ServiceContext = {
     name: config.project,
@@ -131,6 +140,7 @@ export function init(rawConfig: unknown): BugBusterClient {
       }
       processCapture(raw, {
         foldTable,
+        fingerprintCache,
         seenFingerprints,
         newFingerprintsThisFlush,
         serviceContext,
@@ -207,6 +217,13 @@ export function init(rawConfig: unknown): BugBusterClient {
   return {
     ...engine,
     log: createLogApi(engine.captureLog),
+    fingerprintOf(error) {
+      try {
+        return fingerprintOfError(error, serviceContext.name, fingerprintCache);
+      } catch {
+        return undefined;
+      }
+    },
     async shutdown() {
       clearInterval(timer);
       await Promise.race([

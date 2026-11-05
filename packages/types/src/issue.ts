@@ -37,6 +37,18 @@ export const ExemplarRefSchema = z.object({
 });
 export type ExemplarRef = z.infer<typeof ExemplarRefSchema>;
 
+/**
+ * An issue's strongest cause: another issue that failed first, downstream, in the same requests.
+ * `share` is `count / issue.count` — how much of this issue that cause explains.
+ */
+export const IssueCauseSchema = z.object({
+  fingerprint: z.string().min(1),
+  count: z.number().int().nonnegative(),
+  share: z.number().min(0).max(1),
+});
+export type IssueCause = z.infer<typeof IssueCauseSchema>;
+
+/** At or above this share, an issue counts as a symptom of its cause (root-cause-graph.md §6). */
 /** Longest error message kept on an issue's title; the full message stays on its example events. */
 export const ISSUE_TITLE_MAX_CHARS = 500;
 
@@ -67,8 +79,15 @@ export const IssueSchema = z.object({
    * bucket, can list several. Empty for an issue no service was ever recorded for.
    */
   services: z.array(z.string().min(1)).default([]),
+  /** This issue's strongest cause in another service, when one has been recorded. */
+  causedBy: IssueCauseSchema.optional(),
 });
 export type Issue = z.infer<typeof IssueSchema>;
+
+export const SYMPTOM_MIN_SHARE = 0.5;
+
+/** Most causes one fold delta carries; more distinct causes in one window are not recorded. */
+export const MAX_CAUSES_PER_DELTA = 16;
 
 /**
  * What the SDK/Agent actually transmits per flush window for a given fingerprint — the raw
@@ -90,5 +109,12 @@ export const FoldDeltaSchema = z.object({
   /** The service that saw these occurrences (its `project`). Absent from SDKs before 0.3.0. */
   service: z.string().min(1).optional(),
   exemplars: z.array(z.string().min(1)), // event IDs generated in this window; payloads travel separately in the envelope
+  /**
+   * Cause and effect across services (docs/architecture/root-cause-graph.md): for each issue
+   * another service failed with (its fingerprint, from that service's X-BB-Cause response
+   * header), how many of this window's occurrences followed that failure in the same request.
+   * Absent when none did, and from SDKs before 0.4.0.
+   */
+  causedBy: z.record(z.string(), z.number().int().positive()).optional(),
 });
 export type FoldDelta = z.infer<typeof FoldDeltaSchema>;
