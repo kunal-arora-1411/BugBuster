@@ -6,6 +6,40 @@ import { z } from "zod";
  * filter: the ingest edge resolves this BEFORE touching any tenant data, then opens a connection
  * scoped to exactly that database for the rest of the request.
  */
+/** Most recipients one organization's alerts can go to. */
+export const MAX_ALERT_RECIPIENTS = 20;
+
+/**
+ * An organization's email alerts, set by the operator on the admin page: who is told about a new
+ * issue, and which issues count.
+ */
+export const OrgAlertsSchema = z.object({
+  enabled: z.boolean(),
+  recipients: z.array(z.string().email()).max(MAX_ALERT_RECIPIENTS),
+  /** Only issues seen in one of these services. Absent or empty = every service. */
+  services: z.array(z.string().min(1)).optional(),
+  /** Only issues seen in one of these environments. Absent or empty = every environment. */
+  environments: z.array(z.string().min(1)).optional(),
+  /** Whether alert emails include the top of the stack trace. */
+  includeStack: z.boolean(),
+  /** When alerts were last switched on. Issues first seen before this never alert. */
+  since: z.string().datetime(),
+});
+export type OrgAlerts = z.infer<typeof OrgAlertsSchema>;
+
+/** The alert sender's own bookkeeping for one organization. Never set by the operator. */
+export const OrgAlertStateSchema = z.object({
+  /** When each alert email of the last hour went out, for the hourly cap. */
+  sentAt: z.array(z.string().datetime()),
+  lastSentAt: z.string().datetime().optional(),
+  /** Why the last attempt failed, if it did; cleared by the next successful send. */
+  lastError: z.string().optional(),
+  lastErrorAt: z.string().datetime().optional(),
+  /** Held while one process is sending this org's alerts, so two never send the same issue. */
+  leaseUntil: z.string().datetime().optional(),
+});
+export type OrgAlertState = z.infer<typeof OrgAlertStateSchema>;
+
 export const OrgRecordSchema = z.object({
   orgId: z.string().min(1),
   name: z.string().min(1),
@@ -25,6 +59,8 @@ export const OrgRecordSchema = z.object({
   /** A disabled org's keys are refused (403) for sending and reading. Its data is kept. */
   disabled: z.boolean().optional(),
   disabledAt: z.string().datetime().optional(),
+  alerts: OrgAlertsSchema.optional(),
+  alertState: OrgAlertStateSchema.optional(),
 });
 export type OrgRecord = z.infer<typeof OrgRecordSchema>;
 

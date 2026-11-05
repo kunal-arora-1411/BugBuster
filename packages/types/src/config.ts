@@ -97,5 +97,27 @@ export const BackendConfigSchema = z.object({
    * At least 32 characters, because it is the one credential that can mint new tenants.
    */
   adminToken: z.string().min(32, "adminToken must be at least 32 characters").optional(),
+  /**
+   * Email alerts, sent through Brevo from the operator's own Brevo account. Unset = no alerts are
+   * ever sent (organizations can still save their alert settings; they take effect once this is
+   * configured).
+   */
+  alerts: z
+    .object({
+      brevoApiKey: z.string().min(1),
+      /** The sender address, verified in Brevo. */
+      from: z.string().email(),
+      fromName: z.string().min(1).default("BugBuster"),
+      /** Where the dashboard is served; makes each alert link to its issue. */
+      dashboardUrl: z.string().url().optional(),
+      /** Most alert emails one organization gets per hour; the rest wait and go out together. */
+      maxEmailsPerHour: z.number().int().positive().default(10),
+    })
+    .optional(),
+  /**
+   * Secret for `/internal/alerts/run`, the route a scheduler calls to send pending alerts.
+   * Unset = that route doesn't exist (404).
+   */
+  cronSecret: z.string().min(16, "cronSecret must be at least 16 characters").optional(),
 });
 export type BackendConfig = z.infer<typeof BackendConfigSchema>;

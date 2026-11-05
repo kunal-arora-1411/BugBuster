@@ -11,7 +11,12 @@
 import Fastify from "fastify";
 import { BackendConfigSchema } from "@bugbusterhq/types";
 import { ControlDb } from "./src/db/control.js";
-import { parseAdminToken, parseLogRetentionDays } from "./src/env.js";
+import {
+  parseAdminToken,
+  parseAlertsConfig,
+  parseCronSecret,
+  parseLogRetentionDays,
+} from "./src/env.js";
 import { registerRoutes } from "./src/build-server.js";
 
 const config = BackendConfigSchema.parse({
@@ -19,6 +24,8 @@ const config = BackendConfigSchema.parse({
   port: Number(process.env.PORT ?? 8080),
   logRetentionDays: parseLogRetentionDays(process.env.BUGBUSTER_LOG_RETENTION_DAYS),
   adminToken: parseAdminToken(process.env.BUGBUSTER_ADMIN_TOKEN),
+  alerts: parseAlertsConfig(process.env),
+  cronSecret: parseCronSecret(process.env),
 });
 
 const controlDb = new ControlDb(config.controlDbUri);
@@ -28,5 +35,7 @@ const fastify = Fastify({ bodyLimit: config.ingestMaxBodyBytes });
 registerRoutes(fastify, controlDb, {
   logRetentionDays: config.logRetentionDays,
   adminToken: config.adminToken,
+  alerts: config.alerts,
+  cronSecret: config.cronSecret,
 });
 fastify.listen({ port: config.port, host: "0.0.0.0" });

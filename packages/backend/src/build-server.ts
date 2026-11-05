@@ -1,7 +1,12 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { zstdDecompressSync } from "node:zlib";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
-import type { BackendConfig, ResolvedOrg } from "@bugbusterhq/types";
+import {
+  MAX_ALERT_RECIPIENTS,
+  OrgAlertsSchema,
+  type BackendConfig,
+  type ResolvedOrg,
+} from "@bugbusterhq/types";
 import {
   HEADER_CONFIG_VERSION,
   HEADER_RETRY_AFTER,
@@ -14,6 +19,8 @@ import type { ControlDb, PublicKey, PublicOrg } from "./db/control.js";
 import { TenantDbResolver } from "./db/tenant.js";
 import { extractBearerToken, forgetOrg, noteKeyUse, resolveOrgForRequest } from "./ingest/edge.js";
 import { processEnvelope } from "./ingest/processor.js";
+import { AlertNotifier } from "./alerts/notifier.js";
+import { BrevoMailer, type Mailer } from "./alerts/brevo.js";
 import {
   decodeIssuesCursor,
   getIssue,
@@ -40,6 +47,26 @@ const ORG_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 const MAX_ORG_NAME_CHARS = 200;
 const MAX_KEY_NAME_CHARS = 100;
 const MAX_RETENTION_DAYS = 3650;
+const DEFAULT_ALERTS_PER_HOUR = 10;
+/** Most services or environments one org's alerts can be limited to. */
+const MAX_ALERT_FILTERS = 50;
+const MAX_ALERT_FILTER_CHARS = 100;
+const ALERTS_NOT_CONFIGURED =
+  "email alerts are not set up on this backend: set BUGBUSTER_BREVO_API_KEY and BUGBUSTER_ALERTS_FROM";
+
+/** A list of service or environment names, trimmed and without repeats; undefined when invalid. */
+function parseNameList(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > MAX_ALERT_FILTERS) return undefined;
+  const names: string[] = [];
+  for (const v of value) {
+    if (typeof v !== "string") return undefined;
+    const name = v.trim();
+    if (name.length === 0 || name.length > MAX_ALERT_FILTER_CHARS) return undefined;
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
+}
 
 /** A trimmed name of 1..max characters, or undefined when it is not one. */
 function parseName(value: unknown, max: number): string | undefined {
@@ -168,14 +195,38 @@ async function requireOrg(
  * requires that exact pattern in the recognized entrypoint file, not just a helper that returns
  * an instance internally.
  */
+export interface RouteOptions {
+  logRetentionDays?: number;
+  adminToken?: string;
+  alerts?: BackendConfig["alerts"];
+  cronSecret?: string;
+  /** Replaces the Brevo mailer, for tests. */
+  mailer?: Mailer;
+}
+
 export function registerRoutes(
   app: FastifyInstance,
   controlDb: ControlDb,
-  options: { logRetentionDays?: number; adminToken?: string } = {},
-): void {
+  options: RouteOptions = {},
+): { notifier?: AlertNotifier } {
   const tenants = new TenantDbResolver(controlDb.getClient(), {
     logRetentionDays: options.logRetentionDays,
   });
+  const mailer =
+    options.mailer ??
+    (options.alerts
+      ? new BrevoMailer({
+          apiKey: options.alerts.brevoApiKey,
+          from: options.alerts.from,
+          fromName: options.alerts.fromName,
+        })
+      : undefined);
+  const notifier = mailer
+    ? new AlertNotifier(controlDb, mailer, {
+        dashboardUrl: options.alerts?.dashboardUrl,
+        maxEmailsPerHour: options.alerts?.maxEmailsPerHour ?? DEFAULT_ALERTS_PER_HOUR,
+      })
+    : undefined;
   // The Logs view loads its service/environment dropdowns on every open, so the distinct values are
   // cached per tenant database. Deliberately NOT invalidated on ingest: an active tenant ingests
   // every few seconds, so invalidating there would mean the cache is never hit. Only the TTL
@@ -200,7 +251,7 @@ export function registerRoutes(
   // onSend hook above never gets a chance to help: it decorates a response, but there's no
   // matched route to send one from.
   app.options("/*", async (_request, reply) => {
-    reply.header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
+    reply.header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
     await reply.code(204).send();
   });
 
@@ -250,6 +301,25 @@ export function registerRoutes(
       logRetentionDays: tenants.retentionFor(override),
       retentionOverridden: org.logRetentionDays !== undefined,
       keys: keys.filter((k) => k.orgId === org.orgId),
+      alerts: alertsView(org),
+    };
+  }
+
+  /** An org's email alert settings and how sending has gone, for the admin page. */
+  function alertsView(org: PublicOrg) {
+    const a = org.alerts;
+    const state = org.alertState;
+    const hourAgo = Date.now() - 60 * 60 * 1000;
+    return {
+      enabled: a?.enabled === true,
+      recipients: a?.recipients ?? [],
+      services: a?.services ?? [],
+      environments: a?.environments ?? [],
+      includeStack: a?.includeStack ?? true,
+      ...(a?.since ? { since: a.since } : {}),
+      sentLastHour: (state?.sentAt ?? []).filter((t) => new Date(t).getTime() > hourAgo).length,
+      ...(state?.lastSentAt ? { lastSentAt: state.lastSentAt } : {}),
+      ...(state?.lastError ? { lastError: state.lastError, lastErrorAt: state.lastErrorAt } : {}),
     };
   }
 
@@ -257,7 +327,13 @@ export function registerRoutes(
   app.get("/admin/orgs", async (request, reply) => {
     if (!(await requireAdmin(request, reply))) return;
     const [orgs, keys] = await Promise.all([controlDb.listOrgs(), controlDb.listKeys()]);
-    await reply.send({ orgs: orgs.map((o) => orgView(o, keys)) });
+    await reply.send({
+      orgs: orgs.map((o) => orgView(o, keys)),
+      emailAlerts: {
+        configured: notifier !== undefined,
+        ...(options.alerts ? { from: options.alerts.from } : {}),
+      },
+    });
   });
 
   // Creates an organization and its first key, and returns that key (once — only the hash is
@@ -388,6 +464,113 @@ export function registerRoutes(
         });
       }
       await reply.send(orgView(org, await controlDb.listKeys(orgId)));
+    },
+  );
+
+  // An org's email alerts: whether they're on, who gets them, and which issues count (services and
+  // environments; empty = all). Replaces the whole setting. Switching them on starts from now, so
+  // issues that appeared while they were off are not all emailed at once.
+  app.put<{ Params: { orgId: string }; Body: unknown }>(
+    "/admin/orgs/:orgId/alerts",
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply))) return;
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      if (typeof body.enabled !== "boolean") {
+        await reply.code(400).send({ error: "enabled must be true or false" });
+        return;
+      }
+      if (body.recipients !== undefined && !Array.isArray(body.recipients)) {
+        await reply.code(400).send({ error: "recipients must be a list of email addresses" });
+        return;
+      }
+      const recipients: string[] = [];
+      for (const r of (body.recipients as unknown[] | undefined) ?? []) {
+        const address = typeof r === "string" ? r.trim() : "";
+        if (!OrgAlertsSchema.shape.recipients.element.safeParse(address).success) {
+          await reply.code(400).send({ error: `"${String(r)}" is not an email address` });
+          return;
+        }
+        if (!recipients.some((x) => x.toLowerCase() === address.toLowerCase())) {
+          recipients.push(address);
+        }
+      }
+      if (recipients.length > MAX_ALERT_RECIPIENTS) {
+        await reply
+          .code(400)
+          .send({ error: `at most ${MAX_ALERT_RECIPIENTS} recipients per organization` });
+        return;
+      }
+      if (body.enabled && recipients.length === 0) {
+        await reply.code(400).send({ error: "add at least one recipient to switch alerts on" });
+        return;
+      }
+      const services = parseNameList(body.services);
+      const environments = parseNameList(body.environments);
+      if (!services || !environments) {
+        await reply.code(400).send({
+          error: `services and environments must be lists of up to ${MAX_ALERT_FILTERS} names`,
+        });
+        return;
+      }
+      if (body.includeStack !== undefined && typeof body.includeStack !== "boolean") {
+        await reply.code(400).send({ error: "includeStack must be true or false" });
+        return;
+      }
+
+      const org = await controlDb.setAlerts(request.params.orgId, {
+        enabled: body.enabled,
+        recipients,
+        services,
+        environments,
+        includeStack: body.includeStack !== false,
+      });
+      if (!org) {
+        await reply.code(404).send({ error: "no such org" });
+        return;
+      }
+      await controlDb.recordAdminEvent({
+        action: "org.alerts_changed",
+        orgId: org.orgId,
+        detail: body.enabled
+          ? `on, ${recipients.length} ${recipients.length === 1 ? "recipient" : "recipients"}`
+          : "off",
+      });
+      await reply.send(orgView(org, await controlDb.listKeys(org.orgId)));
+    },
+  );
+
+  // Sends a test email to an org's saved recipients, so the operator can check delivery (and the
+  // Brevo setup) before relying on it.
+  app.post<{ Params: { orgId: string } }>(
+    "/admin/orgs/:orgId/alerts/test",
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply))) return;
+      if (!notifier) {
+        await reply.code(409).send({ error: ALERTS_NOT_CONFIGURED });
+        return;
+      }
+      const org = await controlDb.getOrg(request.params.orgId);
+      if (!org) {
+        await reply.code(404).send({ error: "no such org" });
+        return;
+      }
+      if (!org.alerts?.recipients.length) {
+        await reply.code(400).send({ error: "save at least one recipient first" });
+        return;
+      }
+      let sentTo: number;
+      try {
+        sentTo = await notifier.sendTest(org);
+      } catch (err) {
+        await reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+        return;
+      }
+      await controlDb.recordAdminEvent({
+        action: "org.alerts_tested",
+        orgId: org.orgId,
+        detail: `${sentTo} ${sentTo === 1 ? "recipient" : "recipients"}`,
+      });
+      await reply.send({ sentTo });
     },
   );
 
@@ -571,7 +754,10 @@ export function registerRoutes(
     if (!org) return;
 
     const db = await tenants.forOrgDb(org.dbName, org);
-    await processEnvelope(db, (request.body as Buffer | undefined) ?? Buffer.alloc(0));
+    const result = await processEnvelope(
+      db,
+      (request.body as Buffer | undefined) ?? Buffer.alloc(0),
+    );
 
     const directives = computeDirectives(CONFIG_VERSION);
     reply.header(HEADER_SAMPLE_DIRECTIVE, JSON.stringify(directives.sample));
@@ -581,6 +767,10 @@ export function registerRoutes(
       reply.header(HEADER_RETRY_AFTER, String(directives.retryAfterSeconds));
     }
     await reply.code(202).send();
+    // A new issue may need an alert. After the response, so the sender never waits on email.
+    if (notifier && result.alertCandidates > 0) {
+      afterResponse(() => notifier.runForOrg(org.orgId));
+    }
   });
 
   app.get<{ Querystring: { limit?: string; cursor?: string; service?: string } }>(
@@ -701,13 +891,74 @@ export function registerRoutes(
     facetsCache.set(org.dbName, { at: Date.now(), value });
     await reply.send(value);
   });
+
+  // ---- Email alerts: the scheduler's entry point ------------------------------------------------
+
+  // Sends every org's pending alerts. For a scheduler (Vercel Cron, GitHub Actions, cron-job.org):
+  // alerts normally go out right after the ingest that created the issue, and this catches any
+  // that had to wait (the hourly cap, a failed send). GET too, because that is what Vercel Cron
+  // sends. Off (404) without a secret.
+  const runAlerts = async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!options.cronSecret) {
+      await reply.code(404).send({ error: "not found" });
+      return;
+    }
+    const given = extractBearerToken(request.headers.authorization);
+    if (!given || !tokensMatch(given, options.cronSecret)) {
+      await reply.code(401).send({ error: "invalid cron secret" });
+      return;
+    }
+    if (!notifier) {
+      await reply.send({ configured: false, orgs: 0, emails: 0, alerted: 0, errors: 0 });
+      return;
+    }
+    await reply.send({ configured: true, ...(await notifier.runAll()) });
+  };
+  app.get("/internal/alerts/run", runAlerts);
+  app.post("/internal/alerts/run", runAlerts);
+
+  return { notifier };
 }
 
-export function buildServer(config: BackendConfig, controlDb: ControlDb): FastifyInstance {
+const VERCEL_REQUEST_CONTEXT = Symbol.for("@vercel/request-context");
+type VercelContext = { waitUntil?: (task: Promise<unknown>) => void };
+
+/**
+ * Runs a task after the response has been sent. On Vercel the function would otherwise be frozen
+ * once it responds, so the task is handed to Vercel's `waitUntil`, read from the request context
+ * Vercel provides (what `@vercel/functions` does, without its dependencies). Anywhere else the
+ * process stays up and the task just runs. Errors are swallowed: nothing here may reach the
+ * request that has already been answered.
+ */
+function afterResponse(task: () => Promise<unknown>): void {
+  const running = task().catch(() => {});
+  const store = (globalThis as Record<symbol, { get?: () => VercelContext } | undefined>)[
+    VERCEL_REQUEST_CONTEXT
+  ];
+  store?.get?.()?.waitUntil?.(running);
+}
+
+/** The server and its alert sender (when email alerts are configured). */
+export function createServer(
+  config: BackendConfig,
+  controlDb: ControlDb,
+  overrides: { mailer?: Mailer } = {},
+): { app: FastifyInstance; notifier?: AlertNotifier } {
   const app = Fastify({ bodyLimit: config.ingestMaxBodyBytes });
-  registerRoutes(app, controlDb, {
+  const { notifier } = registerRoutes(app, controlDb, {
     logRetentionDays: config.logRetentionDays,
     adminToken: config.adminToken,
+    alerts: config.alerts,
+    cronSecret: config.cronSecret,
+    ...overrides,
   });
-  return app;
+  return { app, notifier };
+}
+
+export function buildServer(
+  config: BackendConfig,
+  controlDb: ControlDb,
+  overrides: { mailer?: Mailer } = {},
+): FastifyInstance {
+  return createServer(config, controlDb, overrides).app;
 }

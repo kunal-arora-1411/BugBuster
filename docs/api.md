@@ -64,6 +64,7 @@ Lists the authenticated org's issues, most recently seen first.
       "adjustedCount": 1.0,
       "title": { "type": "TypeError", "message": "Cannot read properties of undefined" },
       "services": ["orders-api"],
+      "environments": ["production"],
       "fidelity": { "isExact": true, "adjustedCount": 1.0 }
     }
   ],
@@ -234,9 +235,18 @@ their dates, never the key or its hash.
   "createdAt": "2026-10-01T09:00:00.000Z", "disabled": false,
   "logRetentionDays": 30, "retentionOverridden": true,
   "keys": [{ "keyId": "key_3f9a1c2d4e5b", "orgId": "acme", "name": "checkout-api production",
-             "createdAt": "2026-10-01T09:00:00.000Z", "lastUsedAt": "2026-11-03T08:12:00.000Z" }]
-}] }
+             "createdAt": "2026-10-01T09:00:00.000Z", "lastUsedAt": "2026-11-03T08:12:00.000Z" }],
+  "alerts": { "enabled": true, "recipients": ["dev@acme.com"], "services": [],
+              "environments": ["production"], "includeStack": true,
+              "since": "2026-11-05T09:00:00.000Z", "sentLastHour": 1,
+              "lastSentAt": "2026-11-05T09:41:12.000Z" }
+}],
+  "emailAlerts": { "configured": true, "from": "alerts@yourdomain.com" } }
 ```
+
+`emailAlerts.configured` is false when the backend has no Brevo key: alert settings can still be
+saved, and apply once it does. `alerts.lastError` (with `lastErrorAt`) says why the last send
+failed, if it did.
 
 ## `PATCH /admin/orgs/:orgId`
 
@@ -251,6 +261,41 @@ Changes an org. Admin token, as above. Send one or more of:
 
 **`200`:** the org, in the `GET /admin/orgs` shape · **`400`** nothing to change, or an invalid
 value · **`401`** wrong admin token · **`404`** no such org, or admin disabled.
+
+## `PUT /admin/orgs/:orgId/alerts`
+
+Sets an org's email alerts (replacing the previous setting). Admin token.
+
+```json
+{ "enabled": true, "recipients": ["dev@acme.com", "oncall@acme.com"],
+  "services": [], "environments": ["production"], "includeStack": true }
+```
+
+- `recipients`: up to 20 addresses, at least one when `enabled`. Each gets their own copy.
+- `services` / `environments`: only issues seen in one of these; empty or absent = all.
+- `includeStack` (default `true`): whether emails include the top of the stack trace.
+
+Switching alerts on starts from now: issues that appeared while they were off are not emailed.
+What sends an email is described in the README's [Email alerts](../README.md#email-alerts).
+
+**`200`:** the org, in the `GET /admin/orgs` shape · **`400`** an invalid value · **`401`** wrong
+admin token · **`404`** no such org, or admin disabled.
+
+## `POST /admin/orgs/:orgId/alerts/test`
+
+Sends a test email to the org's saved recipients. **`200`** `{ "sentTo": 2 }` · **`400`** no
+recipients saved · **`409`** the backend has no Brevo key · **`502`** Brevo refused the email; the
+error says why (for example an unverified sender).
+
+## `GET` or `POST /internal/alerts/run`
+
+For a scheduler. Sends every org's pending alerts: ones that waited for the hourly cap, or whose
+send failed. Needs `Authorization: Bearer <BUGBUSTER_CRON_SECRET>` (or Vercel's `CRON_SECRET`,
+which Vercel Cron sends with its `GET`); **`404`** when neither is set, **`401`** when it's wrong.
+
+```json
+{ "configured": true, "orgs": 3, "emails": 1, "alerted": 2, "errors": 0 }
+```
 
 ## `POST /admin/orgs/:orgId/keys` and `DELETE /admin/orgs/:orgId/keys/:keyId`
 
@@ -311,3 +356,6 @@ them.
   changed and when, but not who changed it.
 - Read-only keys. Every org key can both send and read, so a developer with a dashboard key could
   also send data.
+- More alert kinds: a resolved issue coming back, a sudden spike in a known issue, and daily
+  digests. Today an email means a new issue, or one newly seen in an environment or service.
+- Teams managing their own alert recipients. Recipients are set by the operator on `/admin`.

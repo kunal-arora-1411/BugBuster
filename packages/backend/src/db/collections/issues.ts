@@ -36,6 +36,15 @@ export interface IssueDocument {
   title?: IssueTitle;
   /** See `Issue.services`. Absent on issues stored before services were; filled on first read. */
   services?: string[];
+  /** See `Issue.environments`. Filled on first read for issues stored before environments were. */
+  environments?: string[];
+  /**
+   * When the issue started waiting for an email alert; removed once that alert has been dealt with
+   * (sent, or skipped by the org's settings). Set when the issue is created, in the same write, so
+   * no new issue can slip through; and again the first time it appears in another environment or
+   * service, so an error first seen in staging still alerts when it reaches production.
+   */
+  alertPendingAt?: string;
 }
 
 export interface IssueTitle {
@@ -76,7 +85,7 @@ export async function setIssueTitleIfMissing(
  */
 async function fillFromExamples(db: Db, docs: IssueDocument[]): Promise<void> {
   const needing = docs.filter(
-    (d) => (!d.title || !d.services) && (d.exemplarRefs ?? []).length > 0,
+    (d) => (!d.title || !d.services || !d.environments) && (d.exemplarRefs ?? []).length > 0,
   );
   if (needing.length === 0) return;
   try {
@@ -93,6 +102,7 @@ async function fillFromExamples(db: Db, docs: IssueDocument[]): Promise<void> {
             "error.type": 1,
             "error.message": 1,
             "service.name": 1,
+            "service.environment": 1,
           },
         },
       )
@@ -110,15 +120,17 @@ async function fillFromExamples(db: Db, docs: IssueDocument[]): Promise<void> {
           },
         });
       }
-      if (!doc.services) {
-        const names = doc.exemplarRefs
-          .map((r) => byId.get(r.eventId)?.service?.name)
-          .filter((n): n is string => !!n);
-        doc.services = [...new Set(names)];
+      for (const field of ["services", "environments"] as const) {
+        if (doc[field]) continue;
+        const key = field === "services" ? "name" : "environment";
+        const values = doc.exemplarRefs
+          .map((r) => byId.get(r.eventId)?.service?.[key])
+          .filter((v): v is string => !!v);
+        doc[field] = [...new Set(values)];
         writes.push({
           updateOne: {
             filter: { fingerprint: doc.fingerprint },
-            update: { $addToSet: { services: { $each: doc.services } } },
+            update: { $addToSet: { [field]: { $each: doc[field] } } },
           },
         });
       }
@@ -141,6 +153,8 @@ export async function ensureIssuesIndexes(db: Db): Promise<void> {
   await issuesCollection(db).createIndex({ lastSeen: -1, fingerprint: -1 });
   // The Issues view filtered to one service, in the same newest-first order.
   await issuesCollection(db).createIndex({ services: 1, lastSeen: -1, fingerprint: -1 });
+  // Sparse: only issues whose alert has not been dealt with yet are in it.
+  await issuesCollection(db).createIndex({ alertPendingAt: 1 }, { sparse: true });
 }
 
 // Mongo field names historically disallowed literal dots; endpoint paths commonly contain
@@ -154,7 +168,20 @@ function sanitizeEndpointKey(endpoint: string): string {
  * writers" guarantee depends on entirely. One `updateOne` call, one round trip, no read-modify-
  * write race: `$inc` and `$addToSet` are applied server-side, atomically, per document.
  */
-export async function upsertFoldDelta(db: Db, delta: FoldDelta): Promise<void> {
+/**
+ * What a fold did to its issue, for email alerts: `created` when the error is new, `newPlace` when
+ * an existing issue appeared in an environment or service it had not been seen in before.
+ */
+export interface FoldOutcome {
+  created: boolean;
+  newPlace: boolean;
+}
+
+export async function upsertFoldDelta(
+  db: Db,
+  delta: FoldDelta,
+  context: { environments?: readonly string[] } = {},
+): Promise<FoldOutcome> {
   const now = new Date().toISOString();
   const endpointEntries = Object.entries(delta.endpointCounts);
 
@@ -174,6 +201,7 @@ export async function upsertFoldDelta(db: Db, delta: FoldDelta): Promise<void> {
     firstSeen: now,
     exemplarRefs: [],
     adjustedCount: 1.0,
+    alertPendingAt: now,
   };
   if (endpointEntries.length === 0) {
     setOnInsert.endpointCounts = {};
@@ -185,6 +213,7 @@ export async function upsertFoldDelta(db: Db, delta: FoldDelta): Promise<void> {
       userIdSet: { $each: delta.userIds },
       releases: { $each: delta.release ? [delta.release] : [] },
       services: { $each: delta.service ? [delta.service] : [] },
+      environments: { $each: [...(context.environments ?? [])] },
     },
     $push: {
       durationSamplesMs: { $each: delta.durationSamplesMs, $slice: -MAX_DURATION_SAMPLES },
@@ -193,10 +222,40 @@ export async function upsertFoldDelta(db: Db, delta: FoldDelta): Promise<void> {
     $setOnInsert: setOnInsert,
   };
 
+  // The document as it was before this fold (null when this fold created it), to tell whether the
+  // fold brought the issue somewhere new. Only lists that already existed count: an issue from
+  // before environments were recorded gains its first ones without being "new" there.
+  const outcome = async (
+    before: Pick<IssueDocument, "services" | "environments"> | null,
+  ): Promise<FoldOutcome> => {
+    if (before === null) return { created: true, newPlace: false };
+    const seen = (list: string[] | undefined, value: string) =>
+      !Array.isArray(list) || list.includes(value);
+    const newPlace =
+      (delta.service !== undefined && !seen(before.services, delta.service)) ||
+      (context.environments ?? []).some((env) => !seen(before.environments, env));
+    if (newPlace) {
+      await issuesCollection(db).updateOne(
+        { fingerprint: delta.fingerprint },
+        { $set: { alertPendingAt: now } },
+      );
+    }
+    return { created: false, newPlace };
+  };
+  const options = {
+    upsert: true,
+    returnDocument: "before" as const,
+    projection: { _id: 0, services: 1, environments: 1 },
+  };
+
   try {
-    await issuesCollection(db).updateOne({ fingerprint: delta.fingerprint }, update, {
-      upsert: true,
-    });
+    return await outcome(
+      await issuesCollection(db).findOneAndUpdate(
+        { fingerprint: delta.fingerprint },
+        update,
+        options,
+      ),
+    );
   } catch (err) {
     // Two concurrent upserts can both see "no matching document" and both attempt an insert;
     // the unique index on `fingerprint` lets exactly one succeed and the other gets a duplicate
@@ -204,10 +263,14 @@ export async function upsertFoldDelta(db: Db, delta: FoldDelta): Promise<void> {
     // (non-racing) update applies the same $inc/$addToSet/$push correctly — without this retry,
     // that occurrence's count is silently lost under concurrent writers.
     if (err instanceof MongoServerError && err.code === DUPLICATE_KEY_ERROR_CODE) {
-      await issuesCollection(db).updateOne({ fingerprint: delta.fingerprint }, update, {
-        upsert: true,
-      });
-      return;
+      // The other writer created it, so this one did not.
+      return await outcome(
+        await issuesCollection(db).findOneAndUpdate(
+          { fingerprint: delta.fingerprint },
+          update,
+          options,
+        ),
+      );
     }
     throw err;
   }
@@ -285,6 +348,7 @@ function toPublicIssue(doc: IssueDocument): Issue {
     adjustedCount: doc.adjustedCount,
     ...(doc.title ? { title: doc.title } : {}),
     services: doc.services ?? [],
+    environments: doc.environments ?? [],
   };
 }
 
@@ -352,6 +416,73 @@ export async function listIssues(
         ? encodeIssuesCursor({ lastSeen: last.lastSeen, fingerprint: last.fingerprint })
         : undefined,
   };
+}
+
+/** Issues waiting for their email alert, oldest first. */
+export async function listAlertPending(db: Db, limit: number): Promise<IssueDocument[]> {
+  return issuesCollection(db)
+    .find({ alertPendingAt: { $exists: true } })
+    .sort({ alertPendingAt: 1 })
+    .limit(limit)
+    .toArray();
+}
+
+/** Marks these issues' alerts as dealt with. */
+export async function clearAlertPending(db: Db, fingerprints: readonly string[]): Promise<void> {
+  if (fingerprints.length === 0) return;
+  await issuesCollection(db).updateMany(
+    { fingerprint: { $in: [...fingerprints] } },
+    { $unset: { alertPendingAt: "" } },
+  );
+}
+
+/** Clears every pending alert mark, for an org whose alerts are off. */
+export async function clearAllAlertPending(db: Db): Promise<void> {
+  await issuesCollection(db).updateMany(
+    { alertPendingAt: { $exists: true } },
+    { $unset: { alertPendingAt: "" } },
+  );
+}
+
+/**
+ * Whether an older issue is the same error as this one: same service, same error type and message,
+ * thrown from the same place (function, file and line of its first example). That is what an SDK
+ * upgrade that changes fingerprints looks like (0.3 added the service to them): the error isn't
+ * new, only its fingerprint is, so it should not be alerted as new. The same message from another
+ * place in the code is a different bug, and does alert.
+ */
+export async function hasEarlierTwin(db: Db, issue: IssueDocument): Promise<boolean> {
+  const firstRef = issue.exemplarRefs?.[0];
+  if (!issue.title || !issue.services?.length || !firstRef) return false;
+  const candidates = await issuesCollection(db)
+    .find(
+      {
+        fingerprint: { $ne: issue.fingerprint },
+        "title.type": issue.title.type,
+        "title.message": issue.title.message,
+        services: { $in: issue.services },
+        firstSeen: { $lt: issue.firstSeen },
+      },
+      { projection: { _id: 0, exemplarRefs: 1 } },
+    )
+    .limit(20)
+    .toArray();
+  const twinRefs = candidates.flatMap((c) =>
+    c.exemplarRefs?.[0] ? [c.exemplarRefs[0].eventId] : [],
+  );
+  if (twinRefs.length === 0) return false;
+  const events = await db
+    .collection<BugBusterEvent>("events")
+    .find(
+      { eventId: { $in: [firstRef.eventId, ...twinRefs] } },
+      { projection: { _id: 0, eventId: 1, source: 1 } },
+    )
+    .toArray();
+  const where = (e: BugBusterEvent | undefined) =>
+    e?.source ? `${e.source.function}@${e.source.file}:${e.source.line}` : undefined;
+  const mine = where(events.find((e) => e.eventId === firstRef.eventId));
+  if (mine === undefined) return false;
+  return events.some((e) => e.eventId !== firstRef.eventId && where(e) === mine);
 }
 
 /** Every service any issue has been seen in, for the Issues view's filter. */

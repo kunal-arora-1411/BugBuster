@@ -67,6 +67,8 @@ export const IssueSchema = z.object({
    * bucket, can list several. Empty for an issue no service was ever recorded for.
    */
   services: z.array(z.string().min(1)).default([]),
+  /** Every environment (`production`, `staging`, …) this issue has been seen in. */
+  environments: z.array(z.string().min(1)).default([]),
 });
 export type Issue = z.infer<typeof IssueSchema>;
 

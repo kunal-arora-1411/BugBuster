@@ -717,11 +717,40 @@
       setStatus("");
       renderAll();
       queueTitles(issues);
+      if (!append && linkedIssue) openLinkedIssue(linkedIssue);
     } catch (err) {
       setStatus(err.message, true, () => loadIssues(append));
       $("issuesTable").hidden = true;
       $("loadMoreBtn").hidden = true;
     }
+  }
+
+  // A link to one issue (#issues/<fingerprint>, as alert emails send) opens it once issues have
+  // loaded. An issue past the first page is fetched on its own and put at the top.
+  let linkedIssue = issueFromHash();
+  function issueFromHash() {
+    const m = /^#issues\/(.+)$/.exec(location.hash);
+    if (!m) return null;
+    try { return decodeURIComponent(m[1]); } catch (_) { return null; }
+  }
+  async function openLinkedIssue(fp) {
+    linkedIssue = null;
+    history.replaceState(null, "", "#issues");
+    let issue = allIssues.find((i) => i.fingerprint === fp);
+    if (!issue) {
+      try {
+        issue = await api("/issues/" + encodeURIComponent(fp));
+      } catch (_) {
+        setStatus("The linked issue isn’t in this organization. Check that Settings has the right API key.", true);
+        return;
+      }
+      if (issue.title) titles.set(issue.fingerprint, issue.title);
+      allIssues = [issue].concat(allIssues);
+      renderAll();
+    }
+    showDetail(issue);
+    const row = document.querySelector(`tr.issue[data-fp="${CSS.escape(fp)}"]`);
+    if (row) row.scrollIntoView({ block: "start" });
   }
 
   // The Service column and filter only appear once issues come from more than one service; with
@@ -1633,10 +1662,19 @@
 
   window.addEventListener("hashchange", () => {
     const v = location.hash === "#logs" ? "logs" : "issues";
+    const fp = issueFromHash();
+    if (fp) {
+      // Opened now if issues are loaded, otherwise once they are.
+      linkedIssue = fp;
+      if (v !== currentView) setView(v, { keepHash: true });
+      if (issuesRequested && allIssues.length) openLinkedIssue(fp);
+      return;
+    }
     if (v !== currentView) setView(v, { keepHash: true });
   });
 
-  // Startup: honor #logs / #issues so a view is linkable, then load whichever is showing.
+  // Startup: honor #logs / #issues (and #issues/<fingerprint>) so a view is linkable, then load
+  // whichever is showing.
   (function init() {
     updateScope();
     setView(location.hash === "#logs" ? "logs" : "issues", { keepHash: true });

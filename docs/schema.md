@@ -10,7 +10,12 @@ exists so you don't have to reverse-engineer the schema from the code.
 ```text
 bugbuster_control                  <- one shared database
   orgs:         { orgId UNIQUE, name, dbName, createdAt, logRetentionDays?, disabled?, disabledAt?,
-                  apiKeyHash? }     <- apiKeyHash: legacy single key, copied into `keys` at startup
+                  alerts?, alertState?, apiKeyHash? }
+                                    <- apiKeyHash: legacy single key, copied into `keys` at startup
+                                    <- alerts: { enabled, recipients[], services[], environments[],
+                                                 includeStack, since } (set on the admin page)
+                                    <- alertState: { sentAt[] (last hour), lastSentAt?, lastError?,
+                                                     lastErrorAt?, leaseUntil? } (the sender's own)
   keys:         { keyId, orgId, name, keyHash UNIQUE, createdAt, lastUsedAt?, revokedAt? }
                                     <- several named keys per org; only the SHA-256 is stored
   admin_events: { at, action, orgId?, detail? }    <- the admin page's change history
@@ -46,10 +51,19 @@ issues:
   adjustedCount     number, defaults 1.0           <- sampling weight (§5.2 — never omit this)
   title?            { type, message }              <- from the first stored example; message <= 500 chars
   services?         string[]                       <- every service (SDK `project`) it was seen in
+  environments?     string[]                       <- every environment it was seen in
+  alertPendingAt?   string (ISO datetime)          <- waiting for its email alert; see below
 ```
 
 Indexes: `fingerprint` (unique), `(lastSeen -1, fingerprint -1)` for the default newest-first
-list, and `(services, lastSeen -1, fingerprint -1)` for the list filtered to one service. Issues
+list, `(services, lastSeen -1, fingerprint -1)` for the list filtered to one service, and a sparse
+`alertPendingAt` index holding only issues whose alert hasn't been dealt with.
+
+**Email alerts.** `alertPendingAt` is set when an issue is created, in the same write, so no new
+issue can be missed; and again the first time an existing issue appears in another environment or
+service. The alert sender (`src/alerts/notifier.ts`) sends the org's pending issues in one email and
+removes the field, or removes it without an email when the org's settings exclude the issue.
+`orgs.alertState.leaseUntil` lets only one backend process send an org's alerts at a time. Issues
 stored by an older backend get `title` and `services` from their example events the first time
 they are read, written back once.
 
