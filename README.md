@@ -367,6 +367,9 @@ issue with the likely root cause one click away. How it works without keeping ev
   is counted against that issue — inside the SDK's fold, so 50,000 failures still cost one record.
   For axios, got or `http`, report the response yourself: `bb.noteDownstreamResponse(res)`.
 
+To see it with no app of your own, run three chained services against your backend:
+`BUGBUSTER_API_KEY=<key> node examples/root-cause-demo/traffic.mjs` (after `pnpm build`).
+
 Design: [`docs/architecture/root-cause-graph.md`](docs/architecture/root-cause-graph.md).
 
 ### 6. Application logs
